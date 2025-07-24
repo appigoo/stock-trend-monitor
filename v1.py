@@ -8,23 +8,26 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import os
+import ta  # 📊 技术指标库
 
-# 页面与参数初始化
 st.set_page_config(page_title="股票監控儀表板", layout="wide")
+
 load_dotenv()
-REFRESH_INTERVAL = 300  # 自动刷新秒数
+REFRESH_INTERVAL = 300
+PRICE_THRESHOLD = 2.0
+VOLUME_THRESHOLD = 50.0
 
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 
-# 邮件提醒函数
 def send_email_alert(ticker, price_pct, volume_pct):
     subject = f"📣 股票異動通知：{ticker}"
     body = f"""
     股票代號：{ticker}
     股價變動：{price_pct:.2f}%
     成交量變動：{volume_pct:.2f}%
+    
     系統偵測到價格與成交量同時異常變動，請立即查看市場情況。
     """
     msg = MIMEMultipart()
@@ -41,24 +44,55 @@ def send_email_alert(ticker, price_pct, volume_pct):
     except Exception as e:
         st.error(f"Email 發送失敗：{e}")
 
-# 用户侧边栏设置参数
-st.sidebar.subheader("🔧 提醒參數設定")
-PRICE_THRESHOLD = st.sidebar.slider("股價變動門檻 (%)", 0.5, 10.0, 2.0)
-VOLUME_THRESHOLD = st.sidebar.slider("成交量變動門檻 (%)", 10.0, 300.0, 50.0)
+def apply_technical_indicators(df):
+    df = ta.add_all_ta_features(df, open="Open", high="High", low="Low",
+                                close="Close", volume="Volume", fillna=True)
+    indicators = {
+        "MACD": df["momentum_macd"].iloc[-1],
+        "RSI (14日)": df["momentum_rsi"].iloc[-1],
+        "Stochastic Oscillator": df["momentum_stoch"].iloc[-1],
+        "ADX (14日)": df["trend_adx"].iloc[-1],
+        "CCI (14日)": df["momentum_cci"].iloc[-1],
+        "ROC (23期)": df["momentum_roc"].iloc[-1],
+    }
+    return indicators
 
-# 主UI设置
-st.title("📊 股票監控儀表板（技術分析 + 策略建議）")
-input_tickers = st.text_input("請輸入股票代號（逗號分隔）", value="TSLA, NIO, TSLL")
-selected_tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
+def explain_indicator(name, value):
+    if name == "RSI (14日)":
+        if value >= 70: return "接近超买区，但仍属强势区间"
+        elif value <= 30: return "超卖区，或有反弹机会"
+        else: return "中性区域"
+    elif name == "ADX (14日)": return "趋势强度高，表明上涨趋势稳固" if value > 40 else "趋势疲软"
+    elif name == "CCI (14日)": return "强势买入信号" if value > 100 else "震荡区域"
+    elif name == "MACD": return "底部金叉后持续上扬，动能增强" if value > 0 else "动能减弱"
+    return "分析中"
+
+def moving_average_trend(df):
+    return {
+        "MA5": df["Close"].rolling(5).mean().iloc[-1],
+        "MA50": df["Close"].rolling(50).mean().iloc[-1],
+        "MA200": df["Close"].rolling(200).mean().iloc[-1]
+    }
+
+def render_support_resistance():
+    st.subheader("📌 支撐與阻力區間")
+    st.markdown("""
+- 🟢 **支撐位**：$4.41 / $3.34  
+- 🔺 **阻力位**：$5.70 / $8.19  
+- ⚠️ **止損位**：$2.98  
+""")
+
 period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y"]
 interval_options = ["1m", "5m", "15m", "1h", "1d"]
+
+st.title("📊 股票監控儀表板（含技術分析與異動提醒 ✅）")
+input_tickers = st.text_input("請輸入股票代號（逗號分隔）", value="TSLA, NIO, TSLL")
+selected_tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
 selected_period = st.selectbox("選擇時間範圍", period_options, index=1)
 selected_interval = st.selectbox("選擇資料間隔", interval_options, index=1)
 window_size = st.slider("滑動平均窗口大小", min_value=2, max_value=40, value=5)
 
 placeholder = st.empty()
-if "last_alert_time" not in st.session_state:
-    st.session_state["last_alert_time"] = {}
 
 while True:
     with placeholder.container():
@@ -70,13 +104,17 @@ while True:
                 data = stock.history(period=selected_period, interval=selected_interval).reset_index()
                 data["Price Change %"] = data["Close"].pct_change() * 100
                 data["Volume Change %"] = data["Volume"].pct_change() * 100
+
                 data["前5均價"] = data["Price Change %"].rolling(window=5).mean()
                 data["前5均量"] = data["Volume"].rolling(window=5).mean()
                 data["📈 股價漲跌幅 (%)"] = ((data["Price Change %"] - data["前5均價"]) / data["前5均價"]) * 100
                 data["📊 成交量變動幅 (%)"] = ((data["Volume"] - data["前5均量"]) / data["前5均量"]) * 100
 
-                data["異動標記"] = data.apply(
-                    lambda row: "✅" if abs(row["Price Change %"]) >= PRICE_THRESHOLD and abs(row["Volume Change %"]) >= VOLUME_THRESHOLD else "", axis=1)
+                def mark_signal(row):
+                    if abs(row["Price Change %"]) >= PRICE_THRESHOLD and abs(row["Volume Change %"]) >= VOLUME_THRESHOLD:
+                        return "✅"
+                    return ""
+                data["異動標記"] = data.apply(mark_signal, axis=1)
 
                 current_price = data["Close"].iloc[-1]
                 previous_close = stock.info.get("previousClose", current_price)
@@ -88,58 +126,37 @@ while True:
                 volume_change = last_volume - prev_volume
                 volume_pct_change = (volume_change / prev_volume) * 100 if prev_volume else 0
 
-                st.metric(f"{ticker} 🟢 股價變動", f"${current_price:.2f}", f"{price_change:.2f} ({price_pct_change:.2f}%)")
-                st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}", f"{volume_change:,} ({volume_pct_change:.2f}%)")
+                st.metric(f"{ticker} 🟢 股價變動", f"${current_price:.2f}",
+                          f"{price_change:.2f} ({price_pct_change:.2f}%)")
+                st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}",
+                          f"{volume_change:,} ({volume_pct_change:.2f}%)")
 
-                now_ts = time.time()
-                last_ts = st.session_state["last_alert_time"].get(ticker, 0)
-                if now_ts - last_ts > 600:
-                    if abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD:
-                        send_email_alert(ticker, price_pct_change, volume_pct_change)
-                        st.warning(f"📣 {ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%")
-                        st.toast(f"📣 {ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%")
-                        st.session_state["last_alert_time"][ticker] = now_ts
+                if abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD:
+                    alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
+                    st.warning(f"📣 {alert_msg}")
+                    st.toast(f"📣 {alert_msg}")
+                    send_email_alert(ticker, price_pct_change, volume_pct_change)
 
                 st.subheader(f"📋 歷史資料：{ticker}")
-                st.dataframe(data[[ "Datetime", "Close", "Price Change %", "📈 股價漲跌幅 (%)", "Volume", "Volume Change %", "📊 成交量變動幅 (%)", "異動標記" ]].tail(10), height=600, use_container_width=True)
+                st.dataframe(data[[ "Datetime", "Close", "Price Change %", "📈 股價漲跌幅 (%)",
+                                    "Volume", "Volume Change %", "📊 成交量變動幅 (%)", "異動標記" ]].tail(10),
+                            height=600,use_container_width=True)
 
-                # 📊 技术分析与策略建议
-                with st.expander(f"📊 技术分析與投資建議：{ticker}", expanded=True):
-                    st.markdown("**📌 技术指标分析**")
-                    tech_df = pd.DataFrame({
-                        "指标": ["MACD", "RSI (14日)", "Stochastic Oscillator", "ADX (14日)", "CCI (14日)", "ROC (23期)"],
-                        "当前值": ["0.115", "69.06", "55.93", "50.49", "169.71", "正值"],
-                        "解读": [
-                            "底部金叉后持续上扬，动能增强",
-                            "接近超买区，但仍属强势区间",
-                            "中性偏多，支持上涨趋势",
-                            "趋势强度高，表明上涨趋势稳固",
-                            "强势买入信号",
-                            "价格上涨速度加快"
-                        ]
-                    })
-                    st.dataframe(tech_df, use_container_width=True)
+                # 🧠 技术指标
+                indicators = apply_technical_indicators(data)
+                st.subheader(f"📈 技术指标分析：{ticker}")
+                for name, value in indicators.items():
+                    desc = explain_indicator(name, value)
+                    st.metric(label=name, value=f"{value:.2f}", help=desc)
 
-                    st.markdown("**📉 移动平均线趋势分析**")
-                    ma_df = pd.DataFrame({
-                        "均线周期": ["MA5", "MA50", "MA200"],
-                        "当前值": ["4.53", "4.15", "3.67"],
-                        "趋势": ["买入信号", "买入信号", "买入信号，长期趋势向好"]
-                    })
-                    st.dataframe(ma_df, use_container_width=True)
+                # 📉 移动平均线趋势
+                ma_values = moving_average_trend(data)
+                st.subheader(f"📉 均線趨勢：{ticker}")
+                for ma_name, ma_val in ma_values.items():
+                    signal = "買入信號" if current_price > ma_val else "趨勢下行"
+                    st.metric(label=ma_name, value=f"{ma_val:.2f}", help=signal)
 
-                    st.markdown("**📌 支撑与阻力位**")
-                    sr_df = pd.DataFrame({
-                        "类型": ["支撑位", "阻力位", "止损位"],
-                        "价格区间（美元）": ["4.41 / 3.34", "5.70 / 8.19", "2.98"],
-                        "说明": [
-                            "若回调至此区间，可考虑加仓",
-                            "若突破 $5.70，可能加速上涨",
-                            "若跌破此位，建议止损離場"
-                        ]
-                    })
-                    st.dataframe(sr_df, use_container_width=True)
+                # 📌 支撐阻力展示
+                render_support_resistance()
 
-                    st.markdown("**🧭 投资建议总结**")
-                    st.markdown("""
-                    - 🟢 **短线交易者**：关注 $5.70 的突破机会，若放量突破
+            except Exception as e:
