@@ -5,40 +5,53 @@ import ta
 
 st.set_page_config(page_title="股票技术分析仪表板", layout="wide")
 
-# ------------------------- 模块 1：数据获取 ------------------------- #
+# ------------------------- 模块 1：安全提取数值 ------------------------- #
+def safe_float(val):
+    try:
+        # 如果是 DataFrame 或 ndarray，压缩为一维后取最后一个值
+        if isinstance(val, pd.Series) or isinstance(val, pd.DataFrame):
+            return float(val.squeeze()[-1])
+        elif hasattr(val, "squeeze"):
+            return float(val.squeeze())
+        elif hasattr(val, "values"):
+            return float(val.values[-1])
+        else:
+            return float(val)
+    except Exception as e:
+        st.warning(f"⚠️ 指标提取异常: {e}")
+        return 0.0
+
+# ------------------------- 模块 2：获取并处理数据 ------------------------- #
 @st.cache_data(show_spinner=False)
 def get_data(ticker, period, interval):
     data = yf.download(ticker, period=period, interval=interval, progress=False)
     data.dropna(inplace=True)
-    data = ta.add_all_ta_features(
-        data, open="Open", high="High", low="Low", close="Close", volume="Volume"
+    data = ta.add_all_ta_features(data,
+        open="Open", high="High", low="Low",
+        close="Close", volume="Volume"
     )
     return data
 
-
-# ------------------------- 模块 2：安全值提取 ------------------------- #
-def safe_float(val):
-    try:
-        return float(val.squeeze()) if hasattr(val, "squeeze") else float(val)
-    except:
-        return float(val.values[0]) if hasattr(val, "values") else float(val)
-
-
-# ------------------------- 模块 3：投资建议 ------------------------- #
+# ------------------------- 模块 3：生成投资建议 ------------------------- #
 def generate_suggestion(latest, resistance, support):
     suggestion = ""
-    if safe_float(latest["momentum_rsi"]) > 70:
+    close = safe_float(latest["close"])
+    rsi = safe_float(latest["momentum_rsi"])
+    macd = safe_float(latest["trend_macd"])
+    adx = safe_float(latest["trend_adx"])
+
+    if rsi > 70:
         suggestion += "⚠️ RSI 超买，可能出现回调\n"
-    if safe_float(latest["trend_macd"]) > 0 and safe_float(latest["trend_adx"]) > 25:
+    if macd > 0 and adx > 25:
         suggestion += "✅ MACD 金叉且趋势强，可考虑持有或加仓\n"
-    if safe_float(latest["close"]) > resistance:
+    if close > resistance:
         suggestion += "🚀 突破阻力位，短期内可能加速上涨\n"
-    if safe_float(latest["close"]) < support:
+    if close < support:
         suggestion += "🔻 跌破支撑位，建议观察风险\n"
+
     return suggestion if suggestion else "当前无显著信号"
 
-
-# ------------------------- 模块 4：UI 与主逻辑 ------------------------- #
+# ------------------------- 模块 4：Streamlit 主界面 ------------------------- #
 
 # --- 侧边栏设置 ---
 st.sidebar.header("📊 股票参数")
@@ -53,15 +66,17 @@ except Exception as e:
     st.error(f"❌ 数据获取失败: {e}")
     st.stop()
 
-# --- 基本信息 ---
 latest = df.iloc[-1]
+close_price = safe_float(latest["close"])
+
 st.title(f"{ticker} 技术分析仪表板")
 st.caption(f"当前选择：周期 `{period}`，时间间隔 `{interval}`")
 
 # --- 趋势判断 ---
 st.subheader("📈 趋势与价格结构")
-if safe_float(latest["close"]) > df["close"].mean():
-    st.success("当前价格高于均值，显示上升趋势迹象 📊")
+mean_close = df["close"].mean()
+if close_price > mean_close:
+    st.success("当前价格高于均值，显示上升趋势迹象 📈")
 else:
     st.warning("价格低于均值，趋势疲软 💤")
 
@@ -87,7 +102,7 @@ resistance = df["High"].tail(20).max()
 st.write(f"支撑位估算：${support:.2f}")
 st.write(f"阻力位估算：${resistance:.2f}")
 
-# --- 投资建议模块 ---
+# --- 投资建议输出 ---
 st.subheader("🧠 投资建议总结")
 suggestion = generate_suggestion(latest, resistance, support)
 st.code(suggestion)
