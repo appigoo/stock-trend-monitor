@@ -5,11 +5,14 @@ import ta
 
 st.set_page_config(page_title="股票技术分析仪表板", layout="wide")
 
-# ------------------------- 模块 1：安全提取数值 ------------------------- #
+# ----------------------------- 安全提取数值 ----------------------------- #
 def safe_float(val):
     try:
-        # 如果是 DataFrame 或 ndarray，压缩为一维后取最后一个值
+        # DataFrame 或 Series
         if isinstance(val, pd.Series) or isinstance(val, pd.DataFrame):
+            return float(val.squeeze().iloc[-1])
+        # numpy array
+        elif hasattr(val, "shape") and len(val.shape) == 2:
             return float(val.squeeze()[-1])
         elif hasattr(val, "squeeze"):
             return float(val.squeeze())
@@ -21,7 +24,7 @@ def safe_float(val):
         st.warning(f"⚠️ 指标提取异常: {e}")
         return 0.0
 
-# ------------------------- 模块 2：获取并处理数据 ------------------------- #
+# ----------------------------- 获取数据 ----------------------------- #
 @st.cache_data(show_spinner=False)
 def get_data(ticker, period, interval):
     data = yf.download(ticker, period=period, interval=interval, progress=False)
@@ -32,7 +35,7 @@ def get_data(ticker, period, interval):
     )
     return data
 
-# ------------------------- 模块 3：生成投资建议 ------------------------- #
+# ----------------------------- 投资建议模块 ----------------------------- #
 def generate_suggestion(latest, resistance, support):
     suggestion = ""
     close = safe_float(latest["close"])
@@ -51,15 +54,12 @@ def generate_suggestion(latest, resistance, support):
 
     return suggestion if suggestion else "当前无显著信号"
 
-# ------------------------- 模块 4：Streamlit 主界面 ------------------------- #
-
-# --- 侧边栏设置 ---
+# ----------------------------- 主页面 ----------------------------- #
 st.sidebar.header("📊 股票参数")
 ticker = st.sidebar.text_input("股票代码", value="NIO")
 period = st.sidebar.selectbox("历史数据周期 (period)", ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"], index=3)
 interval = st.sidebar.selectbox("时间粒度 (interval)", ["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk"], index=6)
 
-# --- 获取数据 ---
 try:
     df = get_data(ticker, period, interval)
 except Exception as e:
