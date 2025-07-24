@@ -5,14 +5,25 @@ import ta
 
 st.set_page_config(page_title="NIO 实时分析", layout="wide")
 
-# --- 输入股票代码 ---
+# --- 侧边栏选择 ---
+st.sidebar.header("📊 股票设置")
 ticker = st.sidebar.text_input("输入股票代码", value="NIO")
-period = st.sidebar.selectbox("时间区间", ["7d", "1mo", "3mo", "6mo", "1y"], index=2)
+period = st.sidebar.selectbox("历史数据周期 (period)", ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"], index=3)
+interval = st.sidebar.selectbox("时间粒度 (interval)", ["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk"], index=6)
 
-# --- 获取数据 ---
-data = yf.download(ticker, period=period, interval="1h")
-df = data.copy()
-df = ta.add_all_ta_features(df, open="Open", high="High", low="Low", close="Close", volume="Volume")
+# --- 数据获取 ---
+try:
+    data = yf.download(ticker, period=period, interval=interval, progress=False)
+    df = data.copy()
+    df = ta.add_all_ta_features(df, open="Open", high="High", low="Low", close="Close", volume="Volume")
+except Exception as e:
+    st.error(f"❌ 数据获取失败: {e}")
+    st.stop()
+
+# --- 显示选中的参数 ---
+st.caption(f"当前选择：周期 `{period}`，时间间隔 `{interval}`")
+
+# （后续代码如趋势判断、指标分析、建议等保持不变）
 
 st.title(f"{ticker} 技术分析仪表板")
 st.subheader("📈 趋势与价格结构")
