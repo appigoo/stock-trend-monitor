@@ -9,16 +9,16 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import os
 
-# 基础设定
+# 页面与参数初始化
 st.set_page_config(page_title="股票監控儀表板", layout="wide")
-load_dotenv() 
-REFRESH_INTERVAL = 300  # 秒
+load_dotenv()
+REFRESH_INTERVAL = 300  # 自动刷新秒数
 
-# 邮件设定
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 
+# 邮件提醒函数
 def send_email_alert(ticker, price_pct, volume_pct):
     subject = f"📣 股票異動通知：{ticker}"
     body = f"""
@@ -41,13 +41,13 @@ def send_email_alert(ticker, price_pct, volume_pct):
     except Exception as e:
         st.error(f"Email 發送失敗：{e}")
 
-# 自定义参数区
+# 用户侧边栏设置参数
 st.sidebar.subheader("🔧 提醒參數設定")
 PRICE_THRESHOLD = st.sidebar.slider("股價變動門檻 (%)", 0.5, 10.0, 2.0)
 VOLUME_THRESHOLD = st.sidebar.slider("成交量變動門檻 (%)", 10.0, 300.0, 50.0)
 
-# 主控区
-st.title("📊 股票監控儀表板（含異動提醒、技術分析與策略建議 ✅）")
+# 主UI设置
+st.title("📊 股票監控儀表板（技術分析 + 策略建議）")
 input_tickers = st.text_input("請輸入股票代號（逗號分隔）", value="TSLA, NIO, TSLL")
 selected_tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
 period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y"]
@@ -75,11 +75,8 @@ while True:
                 data["📈 股價漲跌幅 (%)"] = ((data["Price Change %"] - data["前5均價"]) / data["前5均價"]) * 100
                 data["📊 成交量變動幅 (%)"] = ((data["Volume"] - data["前5均量"]) / data["前5均量"]) * 100
 
-                def mark_signal(row):
-                    if abs(row["Price Change %"]) >= PRICE_THRESHOLD and abs(row["Volume Change %"]) >= VOLUME_THRESHOLD:
-                        return "✅"
-                    return ""
-                data["異動標記"] = data.apply(mark_signal, axis=1)
+                data["異動標記"] = data.apply(
+                    lambda row: "✅" if abs(row["Price Change %"]) >= PRICE_THRESHOLD and abs(row["Volume Change %"]) >= VOLUME_THRESHOLD else "", axis=1)
 
                 current_price = data["Close"].iloc[-1]
                 previous_close = stock.info.get("previousClose", current_price)
@@ -98,16 +95,15 @@ while True:
                 last_ts = st.session_state["last_alert_time"].get(ticker, 0)
                 if now_ts - last_ts > 600:
                     if abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD:
-                        alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
-                        st.warning(f"📣 {alert_msg}")
-                        st.toast(f"📣 {alert_msg}")
                         send_email_alert(ticker, price_pct_change, volume_pct_change)
+                        st.warning(f"📣 {ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%")
+                        st.toast(f"📣 {ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%")
                         st.session_state["last_alert_time"][ticker] = now_ts
 
                 st.subheader(f"📋 歷史資料：{ticker}")
                 st.dataframe(data[[ "Datetime", "Close", "Price Change %", "📈 股價漲跌幅 (%)", "Volume", "Volume Change %", "📊 成交量變動幅 (%)", "異動標記" ]].tail(10), height=600, use_container_width=True)
 
-                ### 技术分析与策略建议 ###
+                # 📊 技术分析与策略建议
                 with st.expander(f"📊 技术分析與投資建議：{ticker}", expanded=True):
                     st.markdown("**📌 技术指标分析**")
                     tech_df = pd.DataFrame({
@@ -133,18 +129,17 @@ while True:
                     st.dataframe(ma_df, use_container_width=True)
 
                     st.markdown("**📌 支撑与阻力位**")
-                    support_resistance_df = pd.DataFrame({
+                    sr_df = pd.DataFrame({
                         "类型": ["支撑位", "阻力位", "止损位"],
                         "价格区间（美元）": ["4.41 / 3.34", "5.70 / 8.19", "2.98"],
                         "说明": [
                             "若回调至此区间，可考虑加仓",
                             "若突破 $5.70，可能加速上涨",
-                            "若跌破此位，建议止损离場"
+                            "若跌破此位，建议止损離場"
                         ]
                     })
-                    st.dataframe(support_resistance_df, use_container_width=True)
+                    st.dataframe(sr_df, use_container_width=True)
 
                     st.markdown("**🧭 投资建议总结**")
                     st.markdown("""
-                    - 🟢 **短线交易者**：关注 $5.70 的突破机会，若放量突破可考虑部分止盈。  
-                    - 🟡 **中线持有者**：当前技术面支持持股，等待新车型交付后的市场反应
+                    - 🟢 **短线交易者**：关注 $5.70 的突破机会，若放量突破
