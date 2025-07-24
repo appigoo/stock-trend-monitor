@@ -8,12 +8,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import os
-import ta  # 技术指标库
+import ta
 import traceback
 
+# 页面设置
 st.set_page_config(page_title="股票監控儀表板", layout="wide")
-
 load_dotenv()
+
+# 系统参数
 REFRESH_INTERVAL = 300
 PRICE_THRESHOLD = 2.0
 VOLUME_THRESHOLD = 50.0
@@ -22,6 +24,7 @@ SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 
+# 邮件发送函数
 def send_email_alert(ticker, price_pct, volume_pct):
     subject = f"📣 股票異動通知：{ticker}"
     body = f"""
@@ -45,6 +48,7 @@ def send_email_alert(ticker, price_pct, volume_pct):
     except Exception as e:
         st.error(f"Email 發送失敗：{e}")
 
+# 技术指标计算
 def apply_technical_indicators(df):
     df = ta.add_all_ta_features(df, open="Open", high="High", low="Low",
                                 close="Close", volume="Volume", fillna=True)
@@ -83,6 +87,7 @@ def render_support_resistance():
 - ⚠️ **止損位**：$2.98  
 """)
 
+# 用户输入设置
 period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y"]
 interval_options = ["1m", "5m", "15m", "1h", "1d"]
 
@@ -98,14 +103,12 @@ placeholder = st.empty()
 while True:
     with placeholder.container():
         st.subheader(f"⏱ 更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
         for ticker in selected_tickers:
             stock = yf.Ticker(ticker)
             try:
                 data = stock.history(period=selected_period, interval=selected_interval).reset_index()
                 data["Price Change %"] = data["Close"].pct_change() * 100
                 data["Volume Change %"] = data["Volume"].pct_change() * 100
-
                 data["前5均價"] = data["Price Change %"].rolling(window=5).mean()
                 data["前5均量"] = data["Volume"].rolling(window=5).mean()
                 data["📈 股價漲跌幅 (%)"] = ((data["Price Change %"] - data["前5均價"]) / data["前5均價"]) * 100
@@ -159,4 +162,8 @@ while True:
                 render_support_resistance()
 
             except Exception as e:
-                st.error(f"⚠️ 無法取得 {ticker} 的資料
+                st.error(f"⚠️ 無法取得 {ticker} 的資料：{e}")
+                st.text(traceback.format_exc())
+
+        st.markdown("---")
+        st
