@@ -8,7 +8,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import os
-import ta  # 📊 技术指标库
+import ta  # 技术指标库
+import traceback
 
 st.set_page_config(page_title="股票監控儀表板", layout="wide")
 
@@ -138,25 +139,24 @@ while True:
                     send_email_alert(ticker, price_pct_change, volume_pct_change)
 
                 st.subheader(f"📋 歷史資料：{ticker}")
-                st.dataframe(data[[ "Datetime", "Close", "Price Change %", "📈 股價漲跌幅 (%)",
-                                    "Volume", "Volume Change %", "📊 成交量變動幅 (%)", "異動標記" ]].tail(10),
-                            height=600,use_container_width=True)
+                st.dataframe(data[[
+                    "Datetime", "Close", "Price Change %", "📈 股價漲跌幅 (%)",
+                    "Volume", "Volume Change %", "📊 成交量變動幅 (%)", "異動標記"
+                ]].tail(10), height=600, use_container_width=True)
 
-                # 🧠 技术指标
                 indicators = apply_technical_indicators(data)
                 st.subheader(f"📈 技术指标分析：{ticker}")
                 for name, value in indicators.items():
                     desc = explain_indicator(name, value)
                     st.metric(label=name, value=f"{value:.2f}", help=desc)
 
-                # 📉 移动平均线趋势
                 ma_values = moving_average_trend(data)
                 st.subheader(f"📉 均線趨勢：{ticker}")
                 for ma_name, ma_val in ma_values.items():
                     signal = "買入信號" if current_price > ma_val else "趨勢下行"
                     st.metric(label=ma_name, value=f"{ma_val:.2f}", help=signal)
 
-                # 📌 支撐阻力展示
                 render_support_resistance()
 
             except Exception as e:
+                st.error(f"⚠️ 無法取得 {ticker} 的資料
