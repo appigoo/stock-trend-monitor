@@ -1,115 +1,76 @@
+# 📦 第一步：必要库
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import ta
-import numpy as np
 
-st.set_page_config(page_title="股票技术分析仪表板", layout="wide")
-
-# ------------------------- 安全提取数值 ------------------------- #
-def safe_float(val):
-    try:
-        # DataFrame（如 shape 为 (N,1)）
-        if isinstance(val, pd.DataFrame):
-            arr = val.values.squeeze()
-            return float(arr[-1])
-        # Series
-        elif isinstance(val, pd.Series):
-            return float(val.iloc[-1])
-        # ndarray
-        elif isinstance(val, np.ndarray):
-            return float(val.squeeze()[-1])
-        # 其他对象
-        elif hasattr(val, "values"):
-            return float(val.values[-1])
-        elif hasattr(val, "squeeze"):
-            return float(val.squeeze())
-        else:
-            return float(val)
-    except Exception as e:
-        st.warning(f"⚠️ safe_float 提取失败: {e}")
-        return 0.0
-
-# ------------------------- 获取数据并计算指标 ------------------------- #
-@st.cache_data(show_spinner=False)
-def get_data(ticker, period, interval):
-    data = yf.download(ticker, period=period, interval=interval, progress=False)
-    data.dropna(inplace=True)
-    data = ta.add_all_ta_features(
-        data, open="Open", high="High", low="Low",
-        close="Close", volume="Volume"
-    )
+# 📊 第二步：数据拉取与计算
+@st.cache_data
+def fetch_data(ticker):
+    data = yf.download(ticker, period="3mo", interval="1d")
+    data["RSI"] = ta.momentum.rsi(data["Close"])
+    macd = ta.trend.macd(data["Close"])
+    macd_signal = ta.trend.macd_signal(data["Close"])
+    data["MACD_Hist"] = macd - macd_signal
+    data["EMA20"] = ta.trend.ema_indicator(data["Close"], window=20)
+    data["EMA50"] = ta.trend.ema_indicator(data["Close"], window=50)
     return data
 
-# ------------------------- 投资建议生成 ------------------------- #
-def generate_suggestion(latest, resistance, support):
-    close = safe_float(latest["close"])
-    rsi = safe_float(latest["momentum_rsi"])
-    macd = safe_float(latest["trend_macd"])
-    adx = safe_float(latest["trend_adx"])
+# 📐 第三步：策略评分函数
+def strategy_score(rsi, macd_hist, ema_diff, sentiment=0.8, earnings_growth=0.2):
+    score = 0
+    score += 25 if 30 < rsi < 70 else -10
+    score += 25 if macd_hist > 0 else -10
+    score += 20 if ema_diff > 0 else -15
+    score += 20 * sentiment
+    score += 10 * earnings_growth
+    return round(score, 2)
 
-    suggestion = []
-    if rsi > 70:
-        suggestion.append("⚠️ RSI 超买，可能出现回调")
-    if macd > 0 and adx > 25:
-        suggestion.append("✅ MACD 金叉且趋势强，可考虑持有或加仓")
-    if close > resistance:
-        suggestion.append("🚀 突破阻力位，短期内可能加速上涨")
-    if close < support:
-        suggestion.append("🔻 跌破支撑位，建议观察风险")
+def explain_strategy(score):
+    if score >= 75:
+        return "🔒 建议继续持有：技术面强劲，趋势稳定，长期潜力仍在。"
+    elif score >= 50:
+        return "🧐 建议观察：部分指标转弱，可能出现震荡，留意止盈位。"
+    else:
+        return "⚠️ 建议减仓：技术指标恶化，回调风险增大，应考虑部分止盈或保护策略。"
 
-    return "\n".join(suggestion) if suggestion else "当前无显著信号"
+# 🖥️ 第四步：Streamlit 页面布局
+st.set_page_config(page_title="TSLA 量化神器", layout="wide")
+st.title("🚀 TSLA 智能投资监控面板")
 
-# ------------------------- Streamlit 主界面 ------------------------- #
-st.sidebar.header("📊 股票参数设置")
-ticker = st.sidebar.text_input("股票代码", value="NIO")
-period = st.sidebar.selectbox("数据周期 (period)", ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"], index=3)
-interval = st.sidebar.selectbox("时间粒度 (interval)", ["1m", "5m", "15m", "30m", "1h", "1d", "1wk"], index=5)
+ticker = "TSLA"
+data = fetch_data(ticker)
+latest = data.iloc[-1]
 
-# --- 获取数据 ---
-try:
-    df = get_data(ticker, period, interval)
-except Exception as e:
-    st.error(f"❌ 数据获取失败: {e}")
-    st.stop()
+# 当前持仓信息
+st.subheader("📈 当前持仓表现")
+entry_price = st.number_input("🔢 成本价 $", value=280.0)
+shares = st.number_input("📦 持股数量", value=200)
+market_price = round(latest["Close"], 2)
+profit = (market_price - entry_price) * shares
+st.metric("TSLA 当前价格", f"${market_price}")
+st.metric("账面浮盈", f"${profit:,.2f}", delta=f"{(market_price-entry_price)/entry_price:.2%}")
 
-latest = df.iloc[-1]
-close_price = safe_float(latest["close"])
+# 技术指标图表
+st.subheader("📊 技术指标可视化")
+st.line_chart(data[["Close", "EMA20", "EMA50"]])
+st.line_chart(data[["RSI", "MACD_Hist"]])
 
-st.title(f"{ticker} 技术分析仪表板")
-st.caption(f"当前设置：周期 `{period}`，时间间隔 `{interval}`")
+# 策略评分与解释
+st.subheader("📋 智能策略建议")
+ema_diff = latest["EMA20"] - latest["EMA50"]
+score = strategy_score(latest["RSI"], latest["MACD_Hist"], ema_diff)
+explanation = explain_strategy(score)
+st.metric("策略评分", score)
+st.write(explanation)
 
-# --- 趋势判断 ---
-st.subheader("📈 趋势与价格结构")
-mean_price = df["close"].mean()
-if close_price > mean_price:
-    st.success("📈 当前价格高于均值，呈上升趋势")
-else:
-    st.warning("📉 当前价格低于均值，趋势偏弱")
+# 参数控制区
+st.subheader("🛠️ 策略参数调节")
+sentiment = st.slider("🧠 市场情绪评分", min_value=0.0, max_value=1.0, value=0.8)
+earnings_growth = st.slider("💰 盈利增长估计", min_value=-0.5, max_value=0.5, value=0.2)
+score = strategy_score(latest["RSI"], latest["MACD_Hist"], ema_diff, sentiment, earnings_growth)
+st.success(f"动态评分：{score} ➜ {explain_strategy(score)}")
 
-# --- 技术指标展示 ---
-st.subheader("📊 技术指标分析")
-cols = st.columns(4)
-cols[0].metric("MACD", round(safe_float(latest["trend_macd"]), 3))
-cols[1].metric("RSI", round(safe_float(latest["momentum_rsi"]), 2))
-cols[2].metric("ADX", round(safe_float(latest["trend_adx"]), 2))
-cols[3].metric("CCI", round(safe_float(latest["momentum_cci"]), 2))
+# 推送建议提示（你可以结合 SMTP 或 Telegram 扩展）
+st.info("✅ 可扩展 Email 推送 / Telegram Bot 通知模块，实现实时提醒")
 
-# --- 移动平均线展示 ---
-st.subheader("📉 移动平均线")
-ma5 = df["close"].rolling(window=5).mean().iloc[-1]
-ma50 = df["close"].rolling(window=50).mean().iloc[-1]
-ma200 = df["close"].rolling(window=200).mean().iloc[-1]
-st.write(f"MA5: {ma5:.2f}，MA50: {ma50:.2f}，MA200: {ma200:.2f}")
-
-# --- 支撑与阻力位估算 ---
-st.subheader("📌 支撑与阻力区间")
-support = df["Low"].tail(20).min()
-resistance = df["High"].tail(20).max()
-st.write(f"支撑位：${support:.2f}")
-st.write(f"阻力位：${resistance:.2f}")
-
-# --- 投资建议输出 ---
-st.subheader("🧠 智能投资建议")
-advice = generate_suggestion(latest, resistance, support)
-st.code(advice)
