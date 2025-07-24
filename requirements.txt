@@ -5,5 +5,4 @@ plotly
 numpy
 dotenv
 ta
-smtplib
 traceback
