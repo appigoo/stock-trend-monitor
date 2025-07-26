@@ -1,169 +1,123 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
-import time
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dotenv import load_dotenv
-import os
-import ta
-import traceback
+import matplotlib.pyplot as plt
+from ta.trend import MACD
+import datetime
 
-# 页面设置
-st.set_page_config(page_title="股票監控儀表板", layout="wide")
-load_dotenv()
+# 📥 抓取 TSLA 數據
+st.title("TSLA 股票策略回測")
+start_date = st.date_input("選擇開始日期", value=datetime.date.today() - datetime.timedelta(days=90))
+end_date = st.date_input("選擇結束日期", value=datetime.date.today())
 
-# 系统参数
-REFRESH_INTERVAL = 300
-PRICE_THRESHOLD = 2.0
-VOLUME_THRESHOLD = 50.0
+data = yf.download("TSLA", start=start_date, end=end_date)
+data.dropna(inplace=True)
 
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
+# 🧮 計算 MACD 與成交量移動平均
+macd_indicator = MACD(close=data['Close'], window_slow=26, window_fast=12, window_sign=9)
+data['MACD'] = macd_indicator.macd()
+data['Signal'] = macd_indicator.macd_signal()
+data['Volume_MA5'] = data['Volume'].rolling(5).mean()
 
-# 邮件发送函数
-def send_email_alert(ticker, price_pct, volume_pct):
-    subject = f"📣 股票異動通知：{ticker}"
-    body = f"""
-    股票代號：{ticker}
-    股價變動：{price_pct:.2f}%
-    成交量變動：{volume_pct:.2f}%
-    
-    系統偵測到價格與成交量同時異常變動，請立即查看市場情況。
-    """
-    msg = MIMEMultipart()
-    msg["From"] = SENDER_EMAIL
-    msg["To"] = RECIPIENT_EMAIL
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
-    try:
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, RECIPIENT_EMAIL, msg.as_string())
-        server.quit()
-        st.toast(f"📬 Email 已發送給 {RECIPIENT_EMAIL}")
-    except Exception as e:
-        st.error(f"Email 發送失敗：{e}")
+# 📊 回測參數
+initial_cash = 100000
+cash = initial_cash
+holdings = 0
+history = []
 
-# 技术指标计算
-def apply_technical_indicators(df):
-    df = ta.add_all_ta_features(df, open="Open", high="High", low="Low",
-                                close="Close", volume="Volume", fillna=True)
-    indicators = {
-        "MACD": df["momentum_macd"].iloc[-1],
-        "RSI (14日)": df["momentum_rsi"].iloc[-1],
-        "Stochastic Oscillator": df["momentum_stoch"].iloc[-1],
-        "ADX (14日)": df["trend_adx"].iloc[-1],
-        "CCI (14日)": df["momentum_cci"].iloc[-1],
-        "ROC (23期)": df["momentum_roc"].iloc[-1],
-    }
-    return indicators
+# 🧾 回測邏輯
+for i in range(1, len(data)):
+    today = data.iloc[i]
+    yesterday = data.iloc[i - 1]
+    conditions_buy = (
+        today['High'] > yesterday['High'] and
+        today['Low'] > yesterday['Low'] and
+        today['Close'] > yesterday['Close'] and
+        today['Volume'] > today['Volume_MA5'] and
+        today['MACD'] > 0
+    )
+    conditions_sell = (
+        today['High'] < yesterday['High'] and
+        today['Low'] < yesterday['Low'] and
+        today['Close'] < yesterday['Close'] and
+        today['Volume'] > today['Volume_MA5'] and
+        today['MACD'] < 0
+    )
+    date = data.index[i]
+    price = today['Close']
 
-def explain_indicator(name, value):
-    if name == "RSI (14日)":
-        if value >= 70: return "接近超买区，但仍属强势区间"
-        elif value <= 30: return "超卖区，或有反弹机会"
-        else: return "中性区域"
-    elif name == "ADX (14日)": return "趋势强度高，表明上涨趋势稳固" if value > 40 else "趋势疲软"
-    elif name == "CCI (14日)": return "强势买入信号" if value > 100 else "震荡区域"
-    elif name == "MACD": return "底部金叉后持续上扬，动能增强" if value > 0 else "动能减弱"
-    return "分析中"
+    if conditions_buy:
+        cost = price * 10
+        if cash >= cost:
+            cash -= cost
+            holdings += 10
+            history.append({'Date': date, 'Action': 'Buy', 'Price': price, 'Shares': 10, 'Cash': cash})
+    elif conditions_sell and holdings > 0:
+        revenue = price * holdings
+        cash += revenue
+        history.append({'Date': date, 'Action': 'Sell', 'Price': price, 'Shares': holdings, 'Cash': cash})
+        holdings = 0
 
-def moving_average_trend(df):
-    return {
-        "MA5": df["Close"].rolling(5).mean().iloc[-1],
-        "MA50": df["Close"].rolling(50).mean().iloc[-1],
-        "MA200": df["Close"].rolling(200).mean().iloc[-1]
-    }
+# 💰 結算 & 統計
+final_value = cash + holdings * data['Close'].iloc[-1]
+total_return = (final_value - initial_cash) / initial_cash * 100
+trades = pd.DataFrame(history)
+wins = trades[trades['Action'] == 'Sell']
+total_trades = len(wins)
+avg_profit = wins['Price'].diff().dropna().mean() * 10 if total_trades > 1 else 0
+win_rate = (wins['Price'].diff().dropna() > 0).sum() / max(1, total_trades - 1)
 
-def render_support_resistance():
-    st.subheader("📌 支撐與阻力區間")
-    st.markdown("""
-- 🟢 **支撐位**：$4.41 / $3.34  
-- 🔺 **阻力位**：$5.70 / $8.19  
-- ⚠️ **止損位**：$2.98  
-""")
+# 📈 資金曲線
+equity_curve = pd.Series([initial_cash])
+running_cash = initial_cash
+shares = 0
+for row in history:
+    if row['Action'] == 'Buy':
+        shares += row['Shares']
+        running_cash -= row['Price'] * row['Shares']
+    elif row['Action'] == 'Sell':
+        running_cash += row['Price'] * row['Shares']
+        shares -= row['Shares']
+    equity_curve = equity_curve.append(pd.Series([running_cash + shares * row['Price']]))
 
-# 用户输入设置
-period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y"]
-interval_options = ["1m", "5m", "15m", "1h", "1d"]
+equity_curve.index = [row['Date'] for row in history] + [data.index[-1]]
+equity_curve[-1] = final_value
 
-st.title("📊 股票監控儀表板（含技術分析與異動提醒 ✅）")
-input_tickers = st.text_input("請輸入股票代號（逗號分隔）", value="TSLA, NIO, TSLL")
-selected_tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
-selected_period = st.selectbox("選擇時間範圍", period_options, index=1)
-selected_interval = st.selectbox("選擇資料間隔", interval_options, index=1)
-window_size = st.slider("滑動平均窗口大小", min_value=2, max_value=40, value=5)
+# 📊 顯示結果
+st.subheader("📋 回測報告")
+st.write(f"總回報率：{total_return:.2f}%")
+st.write(f"勝率：{win_rate:.2%}")
+st.write(f"平均每筆交易盈虧：{avg_profit:.2f} USD")
+st.write(f"總交易次數：{total_trades}")
+st.write(f"最後剩餘現金：{cash:.2f} USD")
 
-placeholder = st.empty()
+# 📉 資金曲線圖
+st.subheader("📈 資金曲線圖 (Equity Curve)")
+fig, ax = plt.subplots()
+equity_curve.plot(ax=ax)
+ax.set_ylabel("Portfolio Value (USD)")
+st.pyplot(fig)
 
-while True:
-    with placeholder.container():
-        st.subheader(f"⏱ 更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        for ticker in selected_tickers:
-            stock = yf.Ticker(ticker)
-            try:
-                data = stock.history(period=selected_period, interval=selected_interval).reset_index()
-                data["Price Change %"] = data["Close"].pct_change() * 100
-                data["Volume Change %"] = data["Volume"].pct_change() * 100
-                data["前5均價"] = data["Price Change %"].rolling(window=5).mean()
-                data["前5均量"] = data["Volume"].rolling(window=5).mean()
-                data["📈 股價漲跌幅 (%)"] = ((data["Price Change %"] - data["前5均價"]) / data["前5均價"]) * 100
-                data["📊 成交量變動幅 (%)"] = ((data["Volume"] - data["前5均量"]) / data["前5均量"]) * 100
+# 🕯️ K 線圖與 MACD
+st.subheader("📉 K 線圖含 MACD 與交易訊號")
+fig, ax = plt.subplots(2, figsize=(12, 8), sharex=True)
 
-                def mark_signal(row):
-                    if abs(row["Price Change %"]) >= PRICE_THRESHOLD and abs(row["Volume Change %"]) >= VOLUME_THRESHOLD:
-                        return "✅"
-                    return ""
-                data["異動標記"] = data.apply(mark_signal, axis=1)
+# K 線 + 訊號
+ax[0].plot(data.index, data['Close'], label="Close")
+for row in history:
+    color = 'green' if row['Action'] == 'Buy' else 'red'
+    ax[0].scatter(row['Date'], row['Price'], color=color, label=row['Action'], s=50)
+ax[0].legend()
+ax[0].set_title("TSLA Price + Signals")
 
-                current_price = data["Close"].iloc[-1]
-                previous_close = stock.info.get("previousClose", current_price)
-                price_change = current_price - previous_close
-                price_pct_change = (price_change / previous_close) * 100 if previous_close else 0
+# MACD
+ax[1].plot(data.index, data['MACD'], label="MACD", color='blue')
+ax[1].plot(data.index, data['Signal'], label="Signal", color='orange')
+ax[1].legend()
+ax[1].set_title("MACD Indicator")
+st.pyplot(fig)
 
-                last_volume = data["Volume"].iloc[-1]
-                prev_volume = data["Volume"].iloc[-2] if len(data) > 1 else last_volume
-                volume_change = last_volume - prev_volume
-                volume_pct_change = (volume_change / prev_volume) * 100 if prev_volume else 0
-
-                st.metric(f"{ticker} 🟢 股價變動", f"${current_price:.2f}",
-                          f"{price_change:.2f} ({price_pct_change:.2f}%)")
-                st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}",
-                          f"{volume_change:,} ({volume_pct_change:.2f}%)")
-
-                if abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD:
-                    alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
-                    st.warning(f"📣 {alert_msg}")
-                    st.toast(f"📣 {alert_msg}")
-                    send_email_alert(ticker, price_pct_change, volume_pct_change)
-
-                st.subheader(f"📋 歷史資料：{ticker}")
-                st.dataframe(data[[
-                    "Datetime", "Close", "Price Change %", "📈 股價漲跌幅 (%)",
-                    "Volume", "Volume Change %", "📊 成交量變動幅 (%)", "異動標記"
-                ]].tail(10), height=600, use_container_width=True)
-
-                indicators = apply_technical_indicators(data)
-                st.subheader(f"📈 技术指标分析：{ticker}")
-                for name, value in indicators.items():
-                    desc = explain_indicator(name, value)
-                    st.metric(label=name, value=f"{value:.2f}", help=desc)
-
-                ma_values = moving_average_trend(data)
-                st.subheader(f"📉 均線趨勢：{ticker}")
-                for ma_name, ma_val in ma_values.items():
-                    signal = "買入信號" if current_price > ma_val else "趨勢下行"
-                    st.metric(label=ma_name, value=f"{ma_val:.2f}", help=signal)
-
-                render_support_resistance()
-
-            except Exception as e:
-                st.error(f"⚠️ 無法取得 {ticker} 的資料：{e}")
-                st.text(traceback.format_exc())
-
-        st.markdown("---")
-        st
+# 💾 匯出交易紀錄
+st.subheader("📄 交易紀錄 CSV")
+csv = trades.to_csv(index=False)
+st.download_button("下載交易記錄 CSV", csv, "tsla_trade_history.csv")
