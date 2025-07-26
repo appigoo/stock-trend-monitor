@@ -8,16 +8,16 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 # Streamlit 頁面設置
-st.title("股票回測交易策略")
-st.write("策略：基於價格、成交量和 MACD 的買入/賣出條件")
+st.title("股票回測交易策略（改進版）")
+st.write("改進策略：基於收盤價、成交量、MACD 和止損的買入/賣出條件")
 
 # 用戶輸入 Ticker
 ticker_input = st.text_input("請輸入股票代碼 (例如：TSLA)", value="TSLA")
 
 # 定義計算 MACD 的函數
-def calculate_macd(data, fast=12, slow=26, signal=9):
+def calculate_macd(data, fast=6, slow=13, signal=5):
     """
-    計算 MACD 指標
+    計算 MACD 指標（調整為短期參數）
     參數：data (DataFrame) - 包含收盤價的數據
     返回：MACD 線、訊號線、MACD 柱狀圖
     """
@@ -39,12 +39,15 @@ def get_stock_data(ticker):
     return data
 
 # 回測交易策略
-def backtest_strategy(data, initial_cash=100000):
+def backtest_strategy(data, initial_cash=100000, stop_loss=0.02, max_holding_period=8, commission=0.001):
     """
-    執行回測交易策略
+    執行改進的回測交易策略
     參數：
         data (DataFrame): 包含 OHLC 和成交量的股票數據
         initial_cash (float): 初始資金
+        stop_loss (float): 止損比例（例如 0.02 代表 2%）
+        max_holding_period (int): 最大持倉 K 線數（8 個 15 分鐘 = 2 小時）
+        commission (float): 每筆交易手續費比例
     返回：
         交易記錄、剩餘現金、股權曲線數據、交易訊號
     """
@@ -54,8 +57,10 @@ def backtest_strategy(data, initial_cash=100000):
     trades = []  # 交易記錄
     equity_curve = []  # 股權曲線
     signals = []  # 買入/賣出訊號
+    buy_price = 0  # 記錄買入價格
+    buy_index = 0  # 記錄買入時的索引
 
-    # 計算前 5 個 15 分鐘 K 線的平均成交量（約 1 小時）
+    # 計算前 5 個 K 線的平均成交量
     data['Volume_MA5'] = data['Volume'].rolling(window=5).mean()
 
     # 計算 MACD
@@ -68,22 +73,23 @@ def backtest_strategy(data, initial_cash=100000):
 
         # 買入條件
         buy_condition = (
-            today['High'] > yesterday['High'] and
-            
-            #today['Close'] > yesterday['Close'] and
-            today['Volume'] > today['Volume_MA5'] and
-            today['Low'] > yesterday['Low'] and
+            today['Close'] > yesterday['Close'] and
+            today['Volume'] > 0.8 * today['Volume_MA5'] and
             today['MACD'] > 0
         )
 
         # 賣出條件
         sell_condition = (
-            today['High'] < yesterday['High'] and
-            today['Low'] < yesterday['Low'] and
-            #today['Close'] < yesterday['Close'] and
-            today['Volume'] > today['Volume_MA5']
-            #today['MACD'] < 0
+            today['Close'] < yesterday['Close'] and
+            today['Volume'] > 0.8 * today['Volume_MA5'] and
+            today['MACD'] < 0
         )
+
+        # 止損條件
+        stop_loss_condition = position > 0 and today['Close'] < buy_price * (1 - stop_loss)
+
+        # 持倉時間限制
+        time_limit_condition = position > 0 and (i - buy_index) >= max_holding_period
 
         # 記錄股權曲線
         equity = cash + position * today['Close']
@@ -92,10 +98,12 @@ def backtest_strategy(data, initial_cash=100000):
         # 執行買入
         if buy_condition and position == 0:
             shares_to_buy = 10
-            cost = shares_to_buy * today['Close']
+            cost = shares_to_buy * today['Close'] * (1 + commission)
             if cash >= cost:
                 cash -= cost
                 position += shares_to_buy
+                buy_price = today['Close']
+                buy_index = i
                 trades.append({
                     'Date': today['Datetime'],
                     'Type': 'Buy',
@@ -106,16 +114,18 @@ def backtest_strategy(data, initial_cash=100000):
                 })
                 signals.append({'Date': today['Datetime'], 'Signal': 'Buy', 'Price': today['Close']})
 
-        # 執行賣出
-        elif sell_condition and position > 0:
-            cash += position * today['Close']
+        # 執行賣出（正常賣出、止損或時間限制）
+        elif (sell_condition or stop_loss_condition or time_limit_condition) and position > 0:
+            revenue = position * today['Close'] * (1 - commission)
+            cash += revenue
             trades.append({
                 'Date': today['Datetime'],
                 'Type': 'Sell',
                 'Price': today['Close'],
                 'Shares': position,
                 'Cash': cash,
-                'Equity': equity
+                'Equity': equity,
+                'Reason': 'Stop Loss' if stop_loss_condition else ('Time Limit' if time_limit_condition else 'Sell Signal')
             })
             signals.append({'Date': today['Datetime'], 'Signal': 'Sell', 'Price': today['Close']})
             position = 0
@@ -133,7 +143,7 @@ def generate_report(trades_df, initial_cash, final_cash):
     生成回測報告
     """
     total_return = (final_cash - initial_cash) / initial_cash * 100
-    total_trades = len(trades_df) // 2  # 每筆交易包含買入和賣出
+    total_trades = len(trades_df[trades_df['Type'] == 'Sell'])
     if total_trades == 0:
         return {
             '總回報率 (%)': 0,
