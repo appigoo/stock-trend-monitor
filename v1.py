@@ -34,7 +34,7 @@ def get_stock_data(ticker):
     從 yfinance 獲取指定股票近 5 天的 15 分鐘數據
     """
     stock = yf.Ticker(ticker)
-    data = stock.history(period="5d", interval="5m")
+    data = stock.history(period="5d", interval="15m")
     data.reset_index(inplace=True)
     return data
 
