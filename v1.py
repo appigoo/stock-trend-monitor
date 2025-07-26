@@ -8,25 +8,24 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 # Streamlit 頁面設置
-st.title("股票回測交易策略（改進版）")
-st.write("改進策略：基於收盤價、成交量、MACD 和止損的買入/賣出條件")
+st.title("股票回測交易策略：EMA 交叉與 RSI 確認")
+st.write("策略：基於 5/20 EMA 交叉、RSI 確認和成交量的 15 分鐘趨勢交易")
 
 # 用戶輸入 Ticker
 ticker_input = st.text_input("請輸入股票代碼 (例如：TSLA)", value="TSLA")
 
-# 定義計算 MACD 的函數
-def calculate_macd(data, fast=6, slow=13, signal=5):
-    """
-    計算 MACD 指標（調整為短期參數）
-    參數：data (DataFrame) - 包含收盤價的數據
-    返回：MACD 線、訊號線、MACD 柱狀圖
-    """
-    exp1 = data['Close'].ewm(span=fast, adjust=False).mean()
-    exp2 = data['Close'].ewm(span=slow, adjust=False).mean()
-    macd = exp1 - exp2
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    histogram = macd - signal_line
-    return macd, signal_line, histogram
+# 定義計算 EMA 和 RSI 的函數
+def calculate_ema(data, period):
+    """計算指數移動平均線 (EMA)"""
+    return data['Close'].ewm(span=period, adjust=False).mean()
+
+def calculate_rsi(data, period=14):
+    """計算相對強弱指數 (RSI)"""
+    delta = data['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
 # 獲取股票數據
 def get_stock_data(ticker):
@@ -39,13 +38,14 @@ def get_stock_data(ticker):
     return data
 
 # 回測交易策略
-def backtest_strategy(data, initial_cash=100000, stop_loss=0.02, max_holding_period=8, commission=0.001):
+def backtest_strategy(data, initial_cash=100000, stop_loss=0.015, take_profit=0.03, max_holding_period=8, commission=0.001):
     """
-    執行改進的回測交易策略
+    執行回測交易策略
     參數：
         data (DataFrame): 包含 OHLC 和成交量的股票數據
         initial_cash (float): 初始資金
-        stop_loss (float): 止損比例（例如 0.02 代表 2%）
+        stop_loss (float): 止損比例（1.5%）
+        take_profit (float): 止盈比例（3%）
         max_holding_period (int): 最大持倉 K 線數（8 個 15 分鐘 = 2 小時）
         commission (float): 每筆交易手續費比例
     返回：
@@ -60,11 +60,11 @@ def backtest_strategy(data, initial_cash=100000, stop_loss=0.02, max_holding_per
     buy_price = 0  # 記錄買入價格
     buy_index = 0  # 記錄買入時的索引
 
-    # 計算前 5 個 K 線的平均成交量
+    # 計算技術指標
+    data['EMA5'] = calculate_ema(data, 5)
+    data['EMA20'] = calculate_ema(data, 20)
+    data['RSI'] = calculate_rsi(data, 14)
     data['Volume_MA5'] = data['Volume'].rolling(window=5).mean()
-
-    # 計算 MACD
-    data['MACD'], data['Signal'], _ = calculate_macd(data)
 
     for i in range(1, len(data)):
         # 獲取當前和前一 K 線的數據
@@ -73,22 +73,22 @@ def backtest_strategy(data, initial_cash=100000, stop_loss=0.02, max_holding_per
 
         # 買入條件
         buy_condition = (
-            today['Close'] > yesterday['Close'] and
-            today['Volume'] > 0.8 * today['Volume_MA5'] and
-            today['MACD'] > 0
+            today['EMA5'] > today['EMA20'] and
+            yesterday['EMA5'] <= yesterday['EMA20'] and  # EMA 交叉
+            today['RSI'] > 50 and
+            today['Volume'] > today['Volume_MA5']
         )
 
         # 賣出條件
         sell_condition = (
-            today['Close'] < yesterday['Close'] and
-            today['Volume'] > 0.8 * today['Volume_MA5'] and
-            today['MACD'] < 0
+            today['EMA5'] < today['EMA20'] and
+            yesterday['EMA5'] >= yesterday['EMA20'] and  # EMA 交叉
+            today['RSI'] < 50
         )
 
-        # 止損條件
+        # 止損/止盈條件
         stop_loss_condition = position > 0 and today['Close'] < buy_price * (1 - stop_loss)
-
-        # 持倉時間限制
+        take_profit_condition = position > 0 and today['Close'] > buy_price * (1 + take_profit)
         time_limit_condition = position > 0 and (i - buy_index) >= max_holding_period
 
         # 記錄股權曲線
@@ -114,10 +114,16 @@ def backtest_strategy(data, initial_cash=100000, stop_loss=0.02, max_holding_per
                 })
                 signals.append({'Date': today['Datetime'], 'Signal': 'Buy', 'Price': today['Close']})
 
-        # 執行賣出（正常賣出、止損或時間限制）
-        elif (sell_condition or stop_loss_condition or time_limit_condition) and position > 0:
+        # 執行賣出（正常賣出、止損、止盈或時間限制）
+        elif (sell_condition or stop_loss_condition or take_profit_condition or time_limit_condition) and position > 0:
             revenue = position * today['Close'] * (1 - commission)
             cash += revenue
+            reason = (
+                'Take Profit' if take_profit_condition else
+                'Stop Loss' if stop_loss_condition else
+                'Time Limit' if time_limit_condition else
+                'Sell Signal'
+            )
             trades.append({
                 'Date': today['Datetime'],
                 'Type': 'Sell',
@@ -125,7 +131,7 @@ def backtest_strategy(data, initial_cash=100000, stop_loss=0.02, max_holding_per
                 'Shares': position,
                 'Cash': cash,
                 'Equity': equity,
-                'Reason': 'Stop Loss' if stop_loss_condition else ('Time Limit' if time_limit_condition else 'Sell Signal')
+                'Reason': reason
             })
             signals.append({'Date': today['Datetime'], 'Signal': 'Sell', 'Price': today['Close']})
             position = 0
@@ -194,15 +200,15 @@ def plot_equity_curve(equity_df):
     )
     return fig
 
-# 繪製 K 線圖和 MACD
-def plot_candlestick_with_macd(data, signals_df):
+# 繪製 K 線圖、EMA 和 RSI
+def plot_candlestick_with_indicators(data, signals_df):
     """
-    繪製 K 線圖、MACD 指標和交易訊號
+    繪製 K 線圖、EMA、RSI 和交易訊號
     """
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
                         vertical_spacing=0.1, 
-                        subplot_titles=('K線圖', 'MACD'),
-                        row_heights=[0.7, 0.3])
+                        subplot_titles=('K線圖與EMA', 'RSI', '成交量'),
+                        row_heights=[0.5, 0.3, 0.2])
 
     # K 線圖
     fig.add_trace(go.Candlestick(
@@ -212,6 +218,21 @@ def plot_candlestick_with_macd(data, signals_df):
         low=data['Low'],
         close=data['Close'],
         name='K線'
+    ), row=1, col=1)
+
+    # 添加 EMA
+    fig.add_trace(go.Scatter(
+        x=data['Datetime'],
+        y=data['EMA5'],
+        line=dict(color='blue'),
+        name='5期 EMA'
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=data['Datetime'],
+        y=data['EMA20'],
+        line=dict(color='orange'),
+        name='20期 EMA'
     ), row=1, col=1)
 
     # 添加買入/賣出訊號
@@ -234,34 +255,32 @@ def plot_candlestick_with_macd(data, signals_df):
         name='賣出訊號'
     ), row=1, col=1)
 
-    # MACD 圖
+    # RSI 圖
     fig.add_trace(go.Scatter(
         x=data['Datetime'],
-        y=data['MACD'],
-        line=dict(color='blue'),
-        name='MACD'
+        y=data['RSI'],
+        line=dict(color='purple'),
+        name='RSI'
     ), row=2, col=1)
 
-    fig.add_trace(go.Scatter(
-        x=data['Datetime'],
-        y=data['Signal'],
-        line=dict(color='orange'),
-        name='訊號線'
-    ), row=2, col=1)
+    # 添加 RSI 參考線
+    fig.add_hline(y=50, line_dash="dash", line_color="gray", row=2, col=1)
 
+    # 成交量圖
     fig.add_trace(go.Bar(
         x=data['Datetime'],
-        y=data['MACD'] - data['Signal'],
-        marker=dict(color='grey'),
-        name='MACD 柱狀圖'
-    ), row=2, col=1)
+        y=data['Volume'],
+        marker=dict(color='gray'),
+        name='成交量'
+    ), row=3, col=1)
 
     fig.update_layout(
-        title=f'{ticker_input} K線圖與MACD',
+        title=f'{ticker_input} K線圖與技術指標',
         xaxis_title='日期時間',
         yaxis_title='價格 ($)',
         template='plotly_dark',
-        showlegend=True
+        showlegend=True,
+        height=800
     )
 
     return fig
@@ -302,8 +321,8 @@ def main():
     st.subheader("股權曲線")
     st.plotly_chart(plot_equity_curve(equity_df))
 
-    st.subheader("K線圖與MACD")
-    st.plotly_chart(plot_candlestick_with_macd(data, signals_df))
+    st.subheader("K線圖與技術指標")
+    st.plotly_chart(plot_candlestick_with_indicators(data, signals_df))
 
     # 保存交易記錄為 CSV
     if not trades_df.empty:
