@@ -71,7 +71,7 @@ def backtest_strategy(data, initial_cash=100000):
             today['High'] > yesterday['High'] and
             today['Low'] > yesterday['Low'] and
             #today['Close'] > yesterday['Close'] and
-            today['Volume'] > today['Volume_MA5'] and
+            today['Volume'] > today['Volume_MA5']
             #today['MACD'] > 0
         )
 
@@ -79,7 +79,7 @@ def backtest_strategy(data, initial_cash=100000):
         sell_condition = (
             today['High'] < yesterday['High'] and
             today['Low'] < yesterday['Low'] and
-            today['Close'] < yesterday['Close'] and
+            today['Close'] < yesterday['Close']
             #today['Volume'] > today['Volume_MA5'] and
             #today['MACD'] < 0
         )
