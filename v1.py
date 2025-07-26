@@ -78,8 +78,8 @@ def backtest_strategy(data, initial_cash=100000):
         # 賣出條件
         sell_condition = (
             today['High'] < yesterday['High'] and
-            today['Low'] < yesterday['Low'] and
-            today['Close'] < yesterday['Close']
+            today['Low'] < yesterday['Low']
+            #today['Close'] < yesterday['Close']
             #today['Volume'] >= today['Volume_MA5'] and
             #today['MACD'] < 0
         )
