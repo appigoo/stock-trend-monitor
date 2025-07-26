@@ -69,9 +69,10 @@ def backtest_strategy(data, initial_cash=100000):
         # 買入條件
         buy_condition = (
             today['High'] > yesterday['High'] and
-            today['Low'] > yesterday['Low'] and
+            
             #today['Close'] > yesterday['Close'] and
             today['Volume'] > today['Volume_MA5'] and
+            today['Low'] > yesterday['Low'] and
             today['MACD'] > 0
         )
 
@@ -80,8 +81,8 @@ def backtest_strategy(data, initial_cash=100000):
             today['High'] < yesterday['High'] and
             today['Low'] < yesterday['Low'] and
             #today['Close'] < yesterday['Close'] and
-            today['Volume'] > today['Volume_MA5'] and
-            today['MACD'] < 0
+            today['Volume'] > today['Volume_MA5']
+            #today['MACD'] < 0
         )
 
         # 記錄股權曲線
