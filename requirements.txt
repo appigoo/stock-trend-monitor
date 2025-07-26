@@ -1,5 +1,5 @@
-streamlit
 yfinance
 pandas
-matplotlib
-ta==0.10.2
+numpy
+plotly
+streamlit
