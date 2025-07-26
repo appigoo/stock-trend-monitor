@@ -2,4 +2,4 @@ streamlit
 yfinance
 pandas
 matplotlib
-ta
+ta==0.10.2
