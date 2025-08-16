@@ -36,7 +36,8 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
                      price_trend_vol_buy_signal=False, price_trend_vol_sell_signal=False,
                      price_trend_vol_pct_buy_signal=False, price_trend_vol_pct_sell_signal=False,
                      gap_common_up=False, gap_common_down=False, gap_breakaway_up=False, gap_breakaway_down=False,
-                     gap_runaway_up=False, gap_runaway_down=False, gap_exhaustion_up=False, gap_exhaustion_down=False):
+                     gap_runaway_up=False, gap_runaway_down=False, gap_exhaustion_up=False, gap_exhaustion_down=False,
+                     up_streak_signal=False, down_streak_signal=False):
     subject = f"📣 股票異動通知：{ticker}"
     body = f"""
     股票代號：{ticker}
@@ -83,6 +84,10 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
         body += f"\n📈 衰竭跳空(上)：價格向上跳空，趨勢末端且隨後價格下跌，成交量放大！"
     if gap_exhaustion_down:
         body += f"\n📉 衰竭跳空(下)：價格向下跳空，趨勢末端且隨後價格上漲，成交量放大！"
+    if up_streak_signal:
+        body += f"\n📈 連續上漲訊號：連續 {UP_STREAK_THRESHOLD} 根K線收盤價上漲，進入多頭！"
+    if down_streak_signal:
+        body += f"\n📉 連續下跌訊號：連續 {DOWN_STREAK_THRESHOLD} 根K線收盤價下跌，進入空頭！"
     
     body += "\n系統偵測到異常變動，請立即查看市場情況。"
     msg = MIMEMultipart()
@@ -100,7 +105,7 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
     except Exception as e:
         st.error(f"Email 發送失敗：{e}")
 
-# UI 设定
+# UI 設定
 period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
 interval_options = ["1m", "5m", "2m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
 
@@ -109,10 +114,11 @@ input_tickers = st.text_input("請輸入股票代號（逗號分隔）", value="
 selected_tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
 selected_period = st.selectbox("選擇時間範圍", period_options, index=1)
 selected_interval = st.selectbox("選擇資料間隔", interval_options, index=1)
-window_size = st.slider("滑動平均窗口大小", min_value=2, max_value=40, value=5)
 PRICE_THRESHOLD = st.number_input("價格異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
 VOLUME_THRESHOLD = st.number_input("成交量異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
-GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_value=50.0, value=1.0, step=0.1)  # 新增
+GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
+UP_STREAK_THRESHOLD = st.number_input("連續上漲K線數量 (X)", min_value=1, max_value=20, value=3, step=1)
+DOWN_STREAK_THRESHOLD = st.number_input("連續下跌K線數量 (Y)", min_value=1, max_value=20, value=3, step=1)
 
 placeholder = st.empty()
 
@@ -125,38 +131,38 @@ while True:
                 stock = yf.Ticker(ticker)
                 data = stock.history(period=selected_period, interval=selected_interval).reset_index()
 
-                # 检查数据是否为空并统一时间列名称
+                # 檢查數據是否為空並統一時間列名稱
                 if data.empty or len(data) < 2:
                     st.warning(f"⚠️ {ticker} 無數據或數據不足（期間：{selected_period}，間隔：{selected_interval}），請嘗試其他時間範圍或間隔")
                     continue
 
-                # 统一时间列名称为 "Datetime"
+                # 統一時間列名稱為 "Datetime"
                 if "Date" in data.columns:
                     data = data.rename(columns={"Date": "Datetime"})
                 elif "Datetime" not in data.columns:
                     st.warning(f"⚠️ {ticker} 數據缺少時間列，無法處理")
                     continue
 
-                # 计算涨跌幅百分比
+                # 計算漲跌幅百分比
                 data["Price Change %"] = data["Close"].pct_change().round(4) * 100
                 data["Volume Change %"] = data["Volume"].pct_change().round(4) * 100
                 data["Close_Difference"] = data['Close'].diff().round(2)
                 
-                # 计算前 5 笔平均收盘价与平均成交量
+                # 固定前 5 週期平均收盤價與平均成交量
                 data["前5均價"] = data["Price Change %"].rolling(window=5).mean()
                 data["前5均價ABS"] = abs(data["Price Change %"]).rolling(window=5).mean()
                 data["前5均量"] = data["Volume"].rolling(window=5).mean()
                 data["📈 股價漲跌幅 (%)"] = ((abs(data["Price Change %"]) - data["前5均價ABS"]) / data["前5均價ABS"]).round(4) * 100
                 data["📊 成交量變動幅 (%)"] = ((data["Volume"] - data["前5均量"]) / data["前5均量"]).round(4) * 100
 
-                # 计算 MACD
+                # 計算 MACD
                 data["MACD"], data["Signal"] = calculate_macd(data)
                 
-                # 计算 EMA5 和 EMA10
+                # 計算 EMA5 和 EMA10
                 data["EMA5"] = data["Close"].ewm(span=5, adjust=False).mean()
                 data["EMA10"] = data["Close"].ewm(span=10, adjust=False).mean()
                 
-                # 标记量价异动、Low > High、High < Low、MACD、EMA、价格趋势及带成交量条件的价格趋势信号
+                # 標記量價異動、Low > High、High < Low、MACD、EMA、價格趨勢及帶成交量條件的價格趨勢訊號
                 def mark_signal(row, index):
                     signals = []
                     if abs(row["📈 股價漲跌幅 (%)"]) >= PRICE_THRESHOLD and abs(row["📊 成交量變動幅 (%)"]) >= VOLUME_THRESHOLD:
@@ -205,13 +211,11 @@ while True:
                         row["Close"] < data["Close"].iloc[index-1] and 
                         row["Volume Change %"] > 15):
                         signals.append("📉 價格趨勢賣出(量%)")
-                    # 新增: 跳空检测
                     if index > 0:
                         gap_pct = ((row["Open"] - data["Close"].iloc[index-1]) / data["Close"].iloc[index-1]) * 100
                         is_up_gap = gap_pct > GAP_THRESHOLD
                         is_down_gap = gap_pct < -GAP_THRESHOLD
                         if is_up_gap or is_down_gap:
-                            # 计算趋势方向（基于前5周期收盘价均线）
                             trend = data["Close"].iloc[index-5:index].mean() if index >= 5 else 0
                             prev_trend = data["Close"].iloc[index-6:index-1].mean() if index >= 6 else trend
                             is_up_trend = row["Close"] > trend and trend > prev_trend
@@ -238,11 +242,19 @@ while True:
                                     signals.append("📉 突破跳空(下)")
                                 else:
                                     signals.append("📉 普通跳空(下)")
+                    if index >= UP_STREAK_THRESHOLD:
+                        up_streak = all(data["Close"].iloc[i] > data["Close"].iloc[i-1] for i in range(index-UP_STREAK_THRESHOLD+1, index+1))
+                        if up_streak:
+                            signals.append(f"📈 連續上漲({UP_STREAK_THRESHOLD})")
+                    if index >= DOWN_STREAK_THRESHOLD:
+                        down_streak = all(data["Close"].iloc[i] < data["Close"].iloc[i-1] for i in range(index-DOWN_STREAK_THRESHOLD+1, index+1))
+                        if down_streak:
+                            signals.append(f"📉 連續下跌({DOWN_STREAK_THRESHOLD})")
                     return ", ".join(signals) if signals else ""
                 
                 data["異動標記"] = [mark_signal(row, i) for i, row in data.iterrows()]
 
-                # 当前资料
+                # 當前資料
                 current_price = data["Close"].iloc[-1]
                 previous_close = stock.info.get("previousClose", current_price)
                 price_change = current_price - previous_close
@@ -253,7 +265,7 @@ while True:
                 volume_change = last_volume - prev_volume
                 volume_pct_change = (volume_change / prev_volume) * 100 if prev_volume else 0
 
-                # 检查 Low > High、High < Low、MACD、EMA、价格趋势及带成交量条件的价格趋势信号
+                # 檢查 Low > High、High < Low、MACD、EMA、價格趨勢及帶成交量條件的價格趨勢訊號
                 low_high_signal = len(data) > 1 and data["Low"].iloc[-1] > data["High"].iloc[-2]
                 high_low_signal = len(data) > 1 and data["High"].iloc[-1] < data["Low"].iloc[-2]
                 macd_buy_signal = len(data) > 1 and data["MACD"].iloc[-1] > 0 and data["MACD"].iloc[-2] <= 0
@@ -295,55 +307,15 @@ while True:
                                                   data["Close"].iloc[-1] < data["Close"].iloc[-2] and 
                                                   data["Volume Change %"].iloc[-1] > 15)
                 
-                # 新增: 跳空信号检测
-                gap_common_up = False
-                gap_common_down = False
-                gap_breakaway_up = False
-                gap_breakaway_down = False
-                gap_runaway_up = False
-                gap_runaway_down = False
-                gap_exhaustion_up = False
-                gap_exhaustion_down = False
-                if len(data) > 1:
-                    gap_pct = ((data["Open"].iloc[-1] - data["Close"].iloc[-2]) / data["Close"].iloc[-2]) * 100
-                    is_up_gap = gap_pct > GAP_THRESHOLD
-                    is_down_gap = gap_pct < -GAP_THRESHOLD
-                    if is_up_gap or is_down_gap:
-                        trend = data["Close"].iloc[-5:].mean() if len(data) >= 5 else 0
-                        prev_trend = data["Close"].iloc[-6:-1].mean() if len(data) >= 6 else trend
-                        is_up_trend = data["Close"].iloc[-1] > trend and trend > prev_trend
-                        is_down_trend = data["Close"].iloc[-1] < trend and trend < prev_trend
-                        is_high_volume = data["Volume"].iloc[-1] > data["前5均量"].iloc[-1]
-                        is_price_reversal = (len(data) > 2 and
-                                            ((is_up_gap and data["Close"].iloc[-1] < data["Close"].iloc[-2]) or
-                                             (is_down_gap and data["Close"].iloc[-1] > data["Close"].iloc[-2])))
-                        if is_up_gap:
-                            if is_price_reversal and is_high_volume:
-                                gap_exhaustion_up = True
-                            elif is_up_trend and is_high_volume:
-                                gap_runaway_up = True
-                            elif data["High"].iloc[-1] > data["High"].iloc[-2:-1].max() and is_high_volume:
-                                gap_breakaway_up = True
-                            else:
-                                gap_common_up = True
-                        elif is_down_gap:
-                            if is_price_reversal and is_high_volume:
-                                gap_exhaustion_down = True
-                            elif is_down_trend and is_high_volume:
-                                gap_runaway_down = True
-                            elif data["Low"].iloc[-1] < data["Low"].iloc[-2:-1].min() and is_high_volume:
-                                gap_breakaway_down = True
-                            else:
-                                gap_common_down = True
+                up_streak_signal = False
+                down_streak_signal = False
+                if len(data) >= UP_STREAK_THRESHOLD:
+                    up_streak_signal = all(data["Close"].iloc[i] > data["Close"].iloc[i-1] for i in range(-UP_STREAK_THRESHOLD, 0))
+                if len(data) >= DOWN_STREAK_THRESHOLD:
+                    down_streak_signal = all(data["Close"].iloc[i] < data["Close"].iloc[i-1] for i in range(-DOWN_STREAK_THRESHOLD, 0))
 
-                # 显示当前资料
-                st.metric(f"{ticker} 🟢 股價變動", f"${current_price:.2f}",
-                          f"{price_change:.2f} ({price_pct_change:.2f}%)")
-                st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}",
-                          f"{volume_change:,} ({volume_pct_change:.2f}%)")
-
-                # 异动提醒 + Email 推播，包含基于成交量变化百分比的价格趋势信号
-                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down:
+                # 異動提醒 + Email 推播，包含基於成交量變化百分比的價格趨勢訊號
+                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or up_streak_signal or down_streak_signal:
                     alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
                     if low_high_signal:
                         alert_msg += "，當前最低價高於前一時段最高價"
@@ -385,6 +357,10 @@ while True:
                         alert_msg += "，衰竭跳空(上)（價格向上跳空，趨勢末端且隨後價格下跌，成交量放大）"
                     if gap_exhaustion_down:
                         alert_msg += "，衰竭跳空(下)（價格向下跳空，趨勢末端且隨後價格上漲，成交量放大）"
+                    if up_streak_signal:
+                        alert_msg += f"，連續上漲訊號（連續 {UP_STREAK_THRESHOLD} 根K線收盤價上漲，進入多頭）"
+                    if down_streak_signal:
+                        alert_msg += f"，連續下跌訊號（連續 {DOWN_STREAK_THRESHOLD} 根K線收盤價下跌，進入空頭）"
                     st.warning(f"📣 {alert_msg}")
                     st.toast(f"📣 {alert_msg}")
                     send_email_alert(ticker, price_pct_change, volume_pct_change, low_high_signal, high_low_signal, 
@@ -393,9 +369,10 @@ while True:
                                     price_trend_vol_buy_signal, price_trend_vol_sell_signal,
                                     price_trend_vol_pct_buy_signal, price_trend_vol_pct_sell_signal,
                                     gap_common_up, gap_common_down, gap_breakaway_up, gap_breakaway_down,
-                                    gap_runaway_up, gap_runaway_down, gap_exhaustion_up, gap_exhaustion_down)
+                                    gap_runaway_up, gap_runaway_down, gap_exhaustion_up, gap_exhaustion_down,
+                                    up_streak_signal, down_streak_signal)
 
-                # 添加价格和成交量折线图
+                # 添加價格和成交量折線圖
                 st.subheader(f"📈 {ticker} 價格與成交量趨勢")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 fig = px.line(data.tail(50), x="Datetime", y=["Close", "Volume"], 
@@ -405,7 +382,7 @@ while True:
                 fig.update_layout(yaxis2=dict(overlaying="y", side="right", title="成交量"))
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{timestamp}")
 
-                # 显示含异动标记的历史资料
+                # 顯示含異動標記的歷史資料
                 st.subheader(f"📋 歷史資料：{ticker}")
                 display_data = data[["Datetime","Low","High", "Close", "Volume", "Price Change %", 
                                      "Volume Change %", "📈 股價漲跌幅 (%)", 
@@ -422,7 +399,7 @@ while True:
                 else:
                     st.warning(f"⚠️ {ticker} 歷史數據表無內容可顯示")
 
-                # 添加下载按钮
+                # 添加下載按鈕
                 csv = data.to_csv(index=False)
                 st.download_button(
                     label=f"📥 下載 {ticker} 數據 (CSV)",
