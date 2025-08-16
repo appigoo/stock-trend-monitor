@@ -37,7 +37,9 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
                      price_trend_vol_pct_buy_signal=False, price_trend_vol_pct_sell_signal=False,
                      gap_common_up=False, gap_common_down=False, gap_breakaway_up=False, gap_breakaway_down=False,
                      gap_runaway_up=False, gap_runaway_down=False, gap_exhaustion_up=False, gap_exhaustion_down=False,
-                     continuous_up_buy_signal=False, continuous_down_sell_signal=False):
+                     continuous_up_buy_signal=False, continuous_down_sell_signal=False,
+                     sma50_up_trend=False, sma50_down_trend=False,
+                     sma50_200_up_trend=False, sma50_200_down_trend=False):
     subject = f"📣 股票異動通知：{ticker}"
     body = f"""
     股票代號：{ticker}
@@ -88,6 +90,14 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
         body += f"\n📈 連續向上策略買入訊號：至少連續上漲！"
     if continuous_down_sell_signal:
         body += f"\n📉 連續向下策略賣出訊號：至少連續下跌！"
+    if sma50_up_trend:
+        body += f"\n📈 SMA50 上升趨勢：當前價格高於 SMA50！"
+    if sma50_down_trend:
+        body += f"\n📉 SMA50 下降趨勢：當前價格低於 SMA50！"
+    if sma50_200_up_trend:
+        body += f"\n📈 SMA50_200 上升趨勢：當前價格高於 SMA50 且 SMA50 高於 SMA200！"
+    if sma50_200_down_trend:
+        body += f"\n📉 SMA50_200 下降趨勢：當前價格低於 SMA50 且 SMA50 低於 SMA200！"
     
     body += "\n系統偵測到異常變動，請立即查看市場情況。"
     msg = MIMEMultipart()
@@ -168,6 +178,10 @@ while True:
                 data['Down'] = (data['Close'] < data['Close'].shift(1)).astype(int)
                 data['Continuous_Up'] = data['Up'] * (data['Up'].groupby((data['Up'] == 0).cumsum()).cumcount() + 1)
                 data['Continuous_Down'] = data['Down'] * (data['Down'].groupby((data['Down'] == 0).cumsum()).cumcount() + 1)
+                
+                # 计算 SMA50 和 SMA200
+                data["SMA50"] = data["Close"].rolling(window=50).mean()
+                data["SMA200"] = data["Close"].rolling(window=200).mean()
                 
                 # 标记量价异动、Low > High、High < Low、MACD、EMA、价格趋势及带成交量条件的价格趋势信号
                 def mark_signal(row, index):
@@ -253,6 +267,16 @@ while True:
                         signals.append("📈 連續向上買入")
                     if row['Continuous_Down'] >= CONTINUOUS_DOWN_THRESHOLD:
                         signals.append("📉 連續向下賣出")
+                    if pd.notna(row["SMA50"]):
+                        if row["Close"] > row["SMA50"]:
+                            signals.append("📈 SMA50上升趨勢")
+                        elif row["Close"] < row["SMA50"]:
+                            signals.append("📉 SMA50下降趨勢")
+                    if pd.notna(row["SMA50"]) and pd.notna(row["SMA200"]):
+                        if row["Close"] > row["SMA50"] and row["SMA50"] > row["SMA200"]:
+                            signals.append("📈 SMA50_200上升趨勢")
+                        elif row["Close"] < row["SMA50"] and row["SMA50"] < row["SMA200"]:
+                            signals.append("📉 SMA50_200下降趨勢")
                     return ", ".join(signals) if signals else ""
                 
                 data["異動標記"] = [mark_signal(row, i) for i, row in data.iterrows()]
@@ -355,6 +379,22 @@ while True:
                 continuous_up_buy_signal = data['Continuous_Up'].iloc[-1] >= CONTINUOUS_UP_THRESHOLD
                 continuous_down_sell_signal = data['Continuous_Down'].iloc[-1] >= CONTINUOUS_DOWN_THRESHOLD
 
+                # 新增: SMA趋势信号检测
+                sma50_up_trend = False
+                sma50_down_trend = False
+                sma50_200_up_trend = False
+                sma50_200_down_trend = False
+                if pd.notna(data["SMA50"].iloc[-1]):
+                    if data["Close"].iloc[-1] > data["SMA50"].iloc[-1]:
+                        sma50_up_trend = True
+                    elif data["Close"].iloc[-1] < data["SMA50"].iloc[-1]:
+                        sma50_down_trend = True
+                if pd.notna(data["SMA50"].iloc[-1]) and pd.notna(data["SMA200"].iloc[-1]):
+                    if data["Close"].iloc[-1] > data["SMA50"].iloc[-1] and data["SMA50"].iloc[-1] > data["SMA200"].iloc[-1]:
+                        sma50_200_up_trend = True
+                    elif data["Close"].iloc[-1] < data["SMA50"].iloc[-1] and data["SMA50"].iloc[-1] < data["SMA200"].iloc[-1]:
+                        sma50_200_down_trend = True
+
                 # 显示当前资料
                 st.metric(f"{ticker} 🟢 股價變動", f"${current_price:.2f}",
                           f"{price_change:.2f} ({price_pct_change:.2f}%)")
@@ -362,7 +402,7 @@ while True:
                           f"{volume_change:,} ({volume_pct_change:.2f}%)")
 
                 # 异动提醒 + Email 推播，包含基于成交量变化百分比的价格趋势信号
-                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal:
+                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend:
                     alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
                     if low_high_signal:
                         alert_msg += "，當前最低價高於前一時段最高價"
@@ -408,6 +448,14 @@ while True:
                         alert_msg += f"，連續向上策略買入訊號（至少連續 {CONTINUOUS_UP_THRESHOLD} 根K線上漲）"
                     if continuous_down_sell_signal:
                         alert_msg += f"，連續向下策略賣出訊號（至少連續 {CONTINUOUS_DOWN_THRESHOLD} 根K線下跌）"
+                    if sma50_up_trend:
+                        alert_msg += "，SMA50 上升趨勢（當前價格高於 SMA50）"
+                    if sma50_down_trend:
+                        alert_msg += "，SMA50 下降趨勢（當前價格低於 SMA50）"
+                    if sma50_200_up_trend:
+                        alert_msg += "，SMA50_200 上升趨勢（當前價格高於 SMA50 且 SMA50 高於 SMA200）"
+                    if sma50_200_down_trend:
+                        alert_msg += "，SMA50_200 下降趨勢（當前價格低於 SMA50 且 SMA50 低於 SMA200）"
                     st.warning(f"📣 {alert_msg}")
                     st.toast(f"📣 {alert_msg}")
                     send_email_alert(ticker, price_pct_change, volume_pct_change, low_high_signal, high_low_signal, 
@@ -417,7 +465,9 @@ while True:
                                     price_trend_vol_pct_buy_signal, price_trend_vol_pct_sell_signal,
                                     gap_common_up, gap_common_down, gap_breakaway_up, gap_breakaway_down,
                                     gap_runaway_up, gap_runaway_down, gap_exhaustion_up, gap_exhaustion_down,
-                                    continuous_up_buy_signal, continuous_down_sell_signal)
+                                    continuous_up_buy_signal, continuous_down_sell_signal,
+                                    sma50_up_trend, sma50_down_trend,
+                                    sma50_200_up_trend, sma50_200_down_trend)
 
                 # 添加价格和成交量折线图
                 st.subheader(f"📈 {ticker} 價格與成交量趨勢")
