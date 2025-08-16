@@ -36,7 +36,8 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
                      price_trend_vol_buy_signal=False, price_trend_vol_sell_signal=False,
                      price_trend_vol_pct_buy_signal=False, price_trend_vol_pct_sell_signal=False,
                      gap_common_up=False, gap_common_down=False, gap_breakaway_up=False, gap_breakaway_down=False,
-                     gap_runaway_up=False, gap_runaway_down=False, gap_exhaustion_up=False, gap_exhaustion_down=False):
+                     gap_runaway_up=False, gap_runaway_down=False, gap_exhaustion_up=False, gap_exhaustion_down=False,
+                     continuous_up_buy_signal=False, continuous_down_sell_signal=False):
     subject = f"📣 股票異動通知：{ticker}"
     body = f"""
     股票代號：{ticker}
@@ -83,6 +84,10 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
         body += f"\n📈 衰竭跳空(上)：價格向上跳空，趨勢末端且隨後價格下跌，成交量放大！"
     if gap_exhaustion_down:
         body += f"\n📉 衰竭跳空(下)：價格向下跳空，趨勢末端且隨後價格上漲，成交量放大！"
+    if continuous_up_buy_signal:
+        body += f"\n📈 連續向上策略買入訊號：至少連續上漲！"
+    if continuous_down_sell_signal:
+        body += f"\n📉 連續向下策略賣出訊號：至少連續下跌！"
     
     body += "\n系統偵測到異常變動，請立即查看市場情況。"
     msg = MIMEMultipart()
@@ -113,6 +118,8 @@ selected_interval = st.selectbox("選擇資料間隔", interval_options, index=1
 PRICE_THRESHOLD = st.number_input("價格異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
 VOLUME_THRESHOLD = st.number_input("成交量異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
 GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
+CONTINUOUS_UP_THRESHOLD = st.number_input("連續上漲閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
+CONTINUOUS_DOWN_THRESHOLD = st.number_input("連續下跌閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
 
 placeholder = st.empty()
 
@@ -155,6 +162,12 @@ while True:
                 # 计算 EMA5 和 EMA10
                 data["EMA5"] = data["Close"].ewm(span=5, adjust=False).mean()
                 data["EMA10"] = data["Close"].ewm(span=10, adjust=False).mean()
+                
+                # 计算连续上涨/下跌计数
+                data['Up'] = (data['Close'] > data['Close'].shift(1)).astype(int)
+                data['Down'] = (data['Close'] < data['Close'].shift(1)).astype(int)
+                data['Continuous_Up'] = data['Up'] * (data['Up'].groupby((data['Up'] == 0).cumsum()).cumcount() + 1)
+                data['Continuous_Down'] = data['Down'] * (data['Down'].groupby((data['Down'] == 0).cumsum()).cumcount() + 1)
                 
                 # 标记量价异动、Low > High、High < Low、MACD、EMA、价格趋势及带成交量条件的价格趋势信号
                 def mark_signal(row, index):
@@ -236,6 +249,10 @@ while True:
                                     signals.append("📉 突破跳空(下)")
                                 else:
                                     signals.append("📉 普通跳空(下)")
+                    if row['Continuous_Up'] >= CONTINUOUS_UP_THRESHOLD:
+                        signals.append("📈 連續向上買入")
+                    if row['Continuous_Down'] >= CONTINUOUS_DOWN_THRESHOLD:
+                        signals.append("📉 連續向下賣出")
                     return ", ".join(signals) if signals else ""
                 
                 data["異動標記"] = [mark_signal(row, i) for i, row in data.iterrows()]
@@ -334,6 +351,10 @@ while True:
                             else:
                                 gap_common_down = True
 
+                # 新增: 连续向上/向下信号检测
+                continuous_up_buy_signal = data['Continuous_Up'].iloc[-1] >= CONTINUOUS_UP_THRESHOLD
+                continuous_down_sell_signal = data['Continuous_Down'].iloc[-1] >= CONTINUOUS_DOWN_THRESHOLD
+
                 # 显示当前资料
                 st.metric(f"{ticker} 🟢 股價變動", f"${current_price:.2f}",
                           f"{price_change:.2f} ({price_pct_change:.2f}%)")
@@ -341,7 +362,7 @@ while True:
                           f"{volume_change:,} ({volume_pct_change:.2f}%)")
 
                 # 异动提醒 + Email 推播，包含基于成交量变化百分比的价格趋势信号
-                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down:
+                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal:
                     alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
                     if low_high_signal:
                         alert_msg += "，當前最低價高於前一時段最高價"
@@ -383,6 +404,10 @@ while True:
                         alert_msg += "，衰竭跳空(上)（價格向上跳空，趨勢末端且隨後價格下跌，成交量放大）"
                     if gap_exhaustion_down:
                         alert_msg += "，衰竭跳空(下)（價格向下跳空，趨勢末端且隨後價格上漲，成交量放大）"
+                    if continuous_up_buy_signal:
+                        alert_msg += f"，連續向上策略買入訊號（至少連續 {CONTINUOUS_UP_THRESHOLD} 根K線上漲）"
+                    if continuous_down_sell_signal:
+                        alert_msg += f"，連續向下策略賣出訊號（至少連續 {CONTINUOUS_DOWN_THRESHOLD} 根K線下跌）"
                     st.warning(f"📣 {alert_msg}")
                     st.toast(f"📣 {alert_msg}")
                     send_email_alert(ticker, price_pct_change, volume_pct_change, low_high_signal, high_low_signal, 
@@ -391,7 +416,8 @@ while True:
                                     price_trend_vol_buy_signal, price_trend_vol_sell_signal,
                                     price_trend_vol_pct_buy_signal, price_trend_vol_pct_sell_signal,
                                     gap_common_up, gap_common_down, gap_breakaway_up, gap_breakaway_down,
-                                    gap_runaway_up, gap_runaway_down, gap_exhaustion_up, gap_exhaustion_down)
+                                    gap_runaway_up, gap_runaway_down, gap_exhaustion_up, gap_exhaustion_down,
+                                    continuous_up_buy_signal, continuous_down_sell_signal)
 
                 # 添加价格和成交量折线图
                 st.subheader(f"📈 {ticker} 價格與成交量趨勢")
