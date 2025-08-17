@@ -124,7 +124,6 @@ input_tickers = st.text_input("請輸入股票代號（逗號分隔）", value="
 selected_tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
 selected_period = st.selectbox("選擇時間範圍", period_options, index=1)
 selected_interval = st.selectbox("選擇資料間隔", interval_options, index=1)
-# 修改: 移除 window_size 滑动条
 PRICE_THRESHOLD = st.number_input("價格異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
 VOLUME_THRESHOLD = st.number_input("成交量異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
 GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
@@ -403,7 +402,7 @@ while True:
 
                 # 异动提醒 + Email 推播，包含基于成交量变化百分比的价格趋势信号
                 if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend:
-                    alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
+                    alert_msg = f"{ticker} 異動：價格scenario {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
                     if low_high_signal:
                         alert_msg += "，當前最低價高於前一時段最高價"
                     if high_low_signal:
@@ -479,7 +478,29 @@ while True:
                 fig.update_layout(yaxis2=dict(overlaying="y", side="right", title="成交量"))
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{timestamp}")
 
-                # 显示含异动标记的历史资料
+                # 显示 Price Change % 前 5% 的范围（最高到最低）
+                st.write(f"**{ticker} Price Change % 前 5% 范围**")
+                sorted_price_changes = data["Price Change %"].dropna().sort_values(ascending=False)
+                if len(sorted_price_changes) > 0:
+                    top_5_percent_count = max(1, int(len(sorted_price_changes) * 0.05))  # 至少取1条数据
+                    top_5_percent = sorted_price_changes.head(top_5_percent_count)
+                    range_text = f"最大值: {top_5_percent.max():.2f}%, 最小值: {top_5_percent.min():.2f}%"
+                    st.write(range_text)
+                else:
+                    st.write("无有效 Price Change % 数据")
+
+                # 显示 Price Change % 最低到最高前 5% 的范围
+                st.write(f"**{ticker} Price Change % 最低到最高前 5% 范围**")
+                sorted_price_changes_asc = data["Price Change %"].dropna().sort_values(ascending=True)
+                if len(sorted_price_changes_asc) > 0:
+                    bottom_5_percent_count = max(1, int(len(sorted_price_changes_asc) * 0.05))  # 至少取1条数据
+                    bottom_5_percent = sorted_price_changes_asc.head(bottom_5_percent_count)
+                    range_text_asc = f"最小值: {bottom_5_percent.min():.2f}%, 最大值: {bottom_5_percent.max():.2f}%"
+                    st.write(range_text_asc)
+                else:
+                    st.write("无有效 Price Change % 数据")
+
+                # 显示含异动标记的历史 periferia
                 st.subheader(f"📋 歷史資料：{ticker}")
                 display_data = data[["Datetime","Low","High", "Close", "Volume", "Price Change %", 
                                      "Volume Change %", "📈 股價漲跌幅 (%)", 
