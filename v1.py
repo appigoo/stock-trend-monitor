@@ -118,7 +118,7 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
 # UI 设定
 period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
 interval_options = ["1m", "5m", "2m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
-percentile_options = [1, 5, 10, 20]  # 新增：百分比阈值选项
+percentile_options = [1, 5, 10, 20]  # 百分比阈值选项
 
 st.title("📊 股票監控儀表板（含異動提醒與 Email 通知 ✅）")
 input_tickers = st.text_input("請輸入股票代號（逗號分隔）", value="TSLA, NIO, TSLL")
@@ -130,7 +130,7 @@ VOLUME_THRESHOLD = st.number_input("成交量異動閾值 (%)", min_value=0.1, m
 GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
 CONTINUOUS_UP_THRESHOLD = st.number_input("連續上漲閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
 CONTINUOUS_DOWN_THRESHOLD = st.number_input("連續下跌閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
-PERCENTILE_THRESHOLD = st.selectbox("選擇 Price Change % 數據範圍 (%)", percentile_options, index=1)  # 新增：百分比阈值下拉菜单
+PERCENTILE_THRESHOLD = st.selectbox("選擇 Price Change %、Volume Change % 和 Volume 數據範圍 (%)", percentile_options, index=1)  # 修改：标题反映控制三种范围
 
 placeholder = st.empty()
 
@@ -501,6 +501,50 @@ while True:
                     st.write(range_text_asc)
                 else:
                     st.write("无有效 Price Change % 数据")
+
+                # 显示 Volume Change % 前 X% 的范围（最高到最低）
+                st.write(f"**{ticker} Volume Change % 前 {PERCENTILE_THRESHOLD}% 范围**")
+                sorted_volume_changes = data["Volume Change %"].dropna().sort_values(ascending=False)
+                if len(sorted_volume_changes) > 0:
+                    top_volume_percent_count = max(1, int(len(sorted_volume_changes) * PERCENTILE_THRESHOLD / 100))  # 至少取1条数据
+                    top_volume_percent = sorted_volume_changes.head(top_volume_percent_count)
+                    volume_range_text = f"最大值: {top_volume_percent.max():.2f}%, 最小值: {top_volume_percent.min():.2f}%"
+                    st.write(volume_range_text)
+                else:
+                    st.write("无有效 Volume Change % 数据")
+
+                # 显示 Volume Change % 最低到最高前 X% 的范围
+                st.write(f"**{ticker} Volume Change % 最低到最高前 {PERCENTILE_THRESHOLD}% 范围**")
+                sorted_volume_changes_asc = data["Volume Change %"].dropna().sort_values(ascending=True)
+                if len(sorted_volume_changes_asc) > 0:
+                    bottom_volume_percent_count = max(1, int(len(sorted_volume_changes_asc) * PERCENTILE_THRESHOLD / 100))  # 至少取1条数据
+                    bottom_volume_percent = sorted_volume_changes_asc.head(bottom_volume_percent_count)
+                    volume_range_text_asc = f"最小值: {bottom_volume_percent.min():.2f}%, 最大值: {bottom_volume_percent.max():.2f}%"
+                    st.write(volume_range_text_asc)
+                else:
+                    st.write("无有效 Volume Change % 数据")
+
+                # 显示 Volume 前 X% 的范围（最高到最低）
+                st.write(f"**{ticker} Volume 前 {PERCENTILE_THRESHOLD}% 范围**")
+                sorted_volumes = data["Volume"].dropna().sort_values(ascending=False)
+                if len(sorted_volumes) > 0:
+                    top_volume_abs_count = max(1, int(len(sorted_volumes) * PERCENTILE_THRESHOLD / 100))  # 至少取1条数据
+                    top_volume_abs = sorted_volumes.head(top_volume_abs_count)
+                    volume_abs_range_text = f"最大值: {int(top_volume_abs.max()):,}, 最小值: {int(top_volume_abs.min()):,}"
+                    st.write(volume_abs_range_text)
+                else:
+                    st.write("无有效 Volume 数据")
+
+                # 显示 Volume 最低到最高前 X% 的范围
+                st.write(f"**{ticker} Volume 最低到最高前 {PERCENTILE_THRESHOLD}% 范围**")
+                sorted_volumes_asc = data["Volume"].dropna().sort_values(ascending=True)
+                if len(sorted_volumes_asc) > 0:
+                    bottom_volume_abs_count = max(1, int(len(sorted_volumes_asc) * PERCENTILE_THRESHOLD / 100))  # 至少取1条数据
+                    bottom_volume_abs = sorted_volumes_asc.head(bottom_volume_abs_count)
+                    volume_abs_range_text_asc = f"最小值: {int(bottom_volume_abs.min()):,}, 最大值: {int(bottom_volume_abs.max()):,}"
+                    st.write(volume_abs_range_text_asc)
+                else:
+                    st.write("无有效 Volume 数据")
 
                 # 显示含异动标记的历史资料
                 st.subheader(f"📋 歷史資料：{ticker}")
