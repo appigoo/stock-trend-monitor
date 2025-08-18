@@ -9,7 +9,8 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import os
 import plotly.express as px
-import plotly.graph_objects as go  # 新增：用于 K 线图
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="股票監控儀表板", layout="wide")
 
@@ -30,7 +31,7 @@ def calculate_macd(data, fast=12, slow=26, signal=9):
     signal_line = macd.ewm(span=signal, adjust=False).mean()
     return macd, signal_line
 
-# RSI 计算函数（新增）
+# RSI 计算函数
 def calculate_rsi(data, periods=14):
     delta = data["Close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
@@ -184,7 +185,7 @@ while True:
                 data["EMA5"] = data["Close"].ewm(span=5, adjust=False).mean()
                 data["EMA10"] = data["Close"].ewm(span=10, adjust=False).mean()
                 
-                # 计算 RSI（新增）
+                # 计算 RSI
                 data["RSI"] = calculate_rsi(data)
                 
                 # 计算连续上涨/下跌计数
@@ -291,6 +292,9 @@ while True:
                             signals.append("📈 SMA50_200上升趨勢")
                         elif row["Close"] < row["SMA50"] and row["SMA50"] < row["SMA200"]:
                             signals.append("📉 SMA50_200下降趨勢")
+                    # 检查是否为关键转折点（超过 8 个信号）
+                    if len(signals) > 8:
+                        signals.append(f"🔥 关键转折点 (信号数: {len(signals)})")
                     return ", ".join(signals) if signals else ""
                 
                 data["異動標記"] = [mark_signal(row, i) for i, row in data.iterrows()]
@@ -483,13 +487,12 @@ while True:
                                     sma50_up_trend, sma50_down_trend,
                                     sma50_200_up_trend, sma50_200_down_trend)
 
-                # 添加 K 线图并叠加 EMA5 和 EMA10，包含成交量柱状图和 RSI 子图（优化）
+                # 添加 K 线图（含 EMA）、成交量柱状图和 RSI 子图（优化）
                 st.subheader(f"📈 {ticker} K線圖與技術指標")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                from plotly.subplots import make_subplots
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                                    subplot_titles=(f"{ticker} K線與EMA", "RSI"),
-                                    vertical_spacing=0.1, row_heights=[0.7, 0.3])
+                fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
+                                    subplot_titles=(f"{ticker} K線與EMA", "成交量", "RSI"),
+                                    vertical_spacing=0.1, row_heights=[0.5, 0.2, 0.3])
                 
                 # 添加 K 线图
                 fig.add_trace(go.Candlestick(x=data.tail(50)["Datetime"],
@@ -503,18 +506,19 @@ while True:
                 fig.add_trace(px.line(data.tail(50), x="Datetime", y="EMA5")["data"][0], row=1, col=1)
                 fig.add_trace(px.line(data.tail(50), x="Datetime", y="EMA10")["data"][0], row=1, col=1)
                 
-                # 添加成交量柱状图
+                # 添加成交量柱状图（单独子图）
                 fig.add_bar(x=data.tail(50)["Datetime"], y=data.tail(50)["Volume"], 
-                           name="成交量", opacity=0.3, row=1, col=1)
+                           name="成交量", opacity=0.5, row=2, col=1)
                 
                 # 添加 RSI 子图
-                fig.add_trace(px.line(data.tail(50), x="Datetime", y="RSI")["data"][0], row=2, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)  # 超买线
-                fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)  # 超卖线
+                fig.add_trace(px.line(data.tail(50), x="Datetime", y="RSI")["data"][0], row=3, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)  # 超买线
+                fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)  # 超卖线
                 
-                # 标记 EMA 买入/卖出信号
+                # 标记 EMA 买入/卖出信号和高亮关键转折点
                 for i in range(1, len(data.tail(50))):
                     idx = -50 + i  # 调整索引以匹配 tail(50)
+                    # EMA 买入/卖出信号
                     if (data["EMA5"].iloc[idx] > data["EMA10"].iloc[idx] and 
                         data["EMA5"].iloc[idx-1] <= data["EMA10"].iloc[idx-1]):
                         fig.add_annotation(x=data["Datetime"].iloc[idx], y=data["Close"].iloc[idx],
@@ -523,8 +527,14 @@ while True:
                           data["EMA5"].iloc[idx-1] >= data["EMA10"].iloc[idx-1]):
                         fig.add_annotation(x=data["Datetime"].iloc[idx], y=data["Close"].iloc[idx],
                                          text="📉 EMA賣出", showarrow=True, arrowhead=2, ax=20, ay=30, row=1, col=1)
+                    # 关键转折点（信号数 > 8）
+                    if "关键转折点" in data["異動標記"].iloc[idx]:
+                        fig.add_scatter(x=[data["Datetime"].iloc[idx]], y=[data["Close"].iloc[idx]],
+                                       mode="markers+text", marker=dict(symbol="star", size=12, color="yellow"),
+                                       text=[f"🔥 转折点 ${data['Close'].iloc[idx]:.2f}"],
+                                       textposition="top center", name="关键转折点", row=1, col=1)
                 
-                fig.update_layout(yaxis_title="價格", yaxis2_title="RSI", showlegend=True)
+                fig.update_layout(yaxis_title="價格", yaxis2_title="成交量", yaxis3_title="RSI", showlegend=True)
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{timestamp}")
 
                 # 合并显示五项指标前 X% 的范围到表格
@@ -633,7 +643,7 @@ while True:
                 sorted_volume_change_abs_asc = data["📊 成交量變動幅 (%)"].dropna().sort_values(ascending=True)
                 if len(sorted_volume_change_abs_asc) > 0:
                     bottom_volume_change_abs_count = max(1, int(len(sorted_volume_change_abs_asc) * PERCENTILE_THRESHOLD / 100))
-                    bottom_volume_change_abs = sorted_volume_change_abs_asc.head(bottom_volume_change_abs_count)
+                    bottom_volume_change_abs = sorted_volume_change_abs_asc.head(bottom_volume_abs_count)
                     range_data.append({
                         "指標": "📊 成交量變動幅 (%)",
                         "範圍類型": "最低到最高",
