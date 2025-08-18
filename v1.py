@@ -8,8 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import os
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import plotly.express as px
 
 st.set_page_config(page_title="股票監控儀表板", layout="wide")
 
@@ -29,14 +28,6 @@ def calculate_macd(data, fast=12, slow=26, signal=9):
     macd = exp1 - exp2
     signal_line = macd.ewm(span=signal, adjust=False).mean()
     return macd, signal_line
-
-# RSI 计算函数
-def calculate_rsi(data, periods=14):
-    delta = data["Close"].diff()
-    gain = delta.where(delta > 0, 0).rolling(window=periods).mean()
-    loss = -delta.where(delta < 0, 0).rolling(window=periods).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
 
 # 邮件发送函数
 def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_low_signal=False, 
@@ -124,12 +115,6 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
     except Exception as e:
         st.error(f"Email 發送失敗：{e}")
 
-# 缓存数据获取
-@st.cache_data
-def fetch_stock_data(ticker, period, interval):
-    stock = yf.Ticker(ticker)
-    return stock.history(period=period, interval=interval).reset_index()
-
 # UI 设定
 period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
 interval_options = ["1m", "5m", "2m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
@@ -145,7 +130,7 @@ VOLUME_THRESHOLD = st.number_input("成交量異動閾值 (%)", min_value=0.1, m
 GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
 CONTINUOUS_UP_THRESHOLD = st.number_input("連續上漲閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
 CONTINUOUS_DOWN_THRESHOLD = st.number_input("連續下跌閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
-PERCENTILE_THRESHOLD = st.selectbox("選擇 Price Change %、Volume Change %、Volume、股價漲跌幅 (%)、成交量變動幅 (%) 數據範圍 (%)", percentile_options, index=1)
+PERCENTILE_THRESHOLD = st.selectbox("選擇 Price Change %、Volume Change %、Volume、股價漲跌幅 (%)、成交量變動幅 (%) 數據範圍 (%)", percentile_options, index=1)  # 修改：标题反映控制五项指标
 
 placeholder = st.empty()
 
@@ -155,7 +140,8 @@ while True:
 
         for ticker in selected_tickers:
             try:
-                data = fetch_stock_data(ticker, selected_period, selected_interval)
+                stock = yf.Ticker(ticker)
+                data = stock.history(period=selected_period, interval=selected_interval).reset_index()
 
                 # 检查数据是否为空并统一时间列名称
                 if data.empty or len(data) < 2:
@@ -187,15 +173,6 @@ while True:
                 # 计算 EMA5 和 EMA10
                 data["EMA5"] = data["Close"].ewm(span=5, adjust=False).mean()
                 data["EMA10"] = data["Close"].ewm(span=10, adjust=False).mean()
-                
-                # 计算 RSI
-                data["RSI"] = calculate_rsi(data)
-                
-                # 计算布林带
-                data["SMA20"] = data["Close"].rolling(window=20).mean()
-                data["Std20"] = data["Close"].rolling(window=20).std()
-                data["Upper_BB"] = data["SMA20"] + 2 * data["Std20"]
-                data["Lower_BB"] = data["SMA20"] - 2 * data["Std20"]
                 
                 # 计算连续上涨/下跌计数
                 data['Up'] = (data['Close'] > data['Close'].shift(1)).astype(int)
@@ -306,7 +283,6 @@ while True:
                 data["異動標記"] = [mark_signal(row, i) for i, row in data.iterrows()]
 
                 # 当前资料
-                stock = yf.Ticker(ticker)
                 current_price = data["Close"].iloc[-1]
                 previous_close = stock.info.get("previousClose", current_price)
                 price_change = current_price - previous_close
@@ -359,7 +335,7 @@ while True:
                                                   data["Close"].iloc[-1] < data["Close"].iloc[-2] and 
                                                   data["Volume Change %"].iloc[-1] > 15)
                 
-                # 跳空信号检测
+                # 新增: 跳空信号检测
                 gap_common_up = False
                 gap_common_down = False
                 gap_breakaway_up = False
@@ -400,11 +376,11 @@ while True:
                             else:
                                 gap_common_down = True
 
-                # 连续向上/向下信号检测
+                # 新增: 连续向上/向下信号检测
                 continuous_up_buy_signal = data['Continuous_Up'].iloc[-1] >= CONTINUOUS_UP_THRESHOLD
                 continuous_down_sell_signal = data['Continuous_Down'].iloc[-1] >= CONTINUOUS_DOWN_THRESHOLD
 
-                # SMA趋势信号检测
+                # 新增: SMA趋势信号检测
                 sma50_up_trend = False
                 sma50_down_trend = False
                 sma50_200_up_trend = False
@@ -426,7 +402,7 @@ while True:
                 st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}",
                           f"{volume_change:,} ({volume_pct_change:.2f}%)")
 
-                # 异动提醒 + Email 推播
+                # 异动提醒 + Email 推播，包含基于成交量变化百分比的价格趋势信号
                 if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend:
                     alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
                     if low_high_signal:
@@ -494,107 +470,14 @@ while True:
                                     sma50_up_trend, sma50_down_trend,
                                     sma50_200_up_trend, sma50_200_down_trend)
 
-                # 添加优化后的交互式图表
-                st.subheader(f"📈 {ticker} 價格、成交量與技術指標")
+                # 添加价格和成交量折线图
+                st.subheader(f"📈 {ticker} 價格與成交量趨勢")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-                # 计算价格和成交量颜色
-                data["Price_Direction"] = data["Close"].diff().apply(lambda x: "green" if x > 0 else "red" if x < 0 else "gray")
-                data["Volume_Color"] = data["Volume Change %"].apply(lambda x: "rgba(0, 0, 255, 0.5)" if x > 0 else "rgba(255, 0, 0, 0.5)" if x < 0 else "rgba(128, 128, 128, 0.5)")
-
-                # 创建子图
-                fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
-                                    vertical_spacing=0.05, 
-                                    subplot_titles=[f"{ticker} 價格與成交量", "MACD", "RSI"],
-                                    row_heights=[0.5, 0.25, 0.25])
-
-                # 添加价格折线（动态着色）
-                for i in range(1, len(data.tail(50))):
-                    fig.add_trace(go.Scatter(
-                        x=data.tail(50)["Datetime"].iloc[i-1:i+1],
-                        y=data.tail(50)["Close"].iloc[i-1:i+1],
-                        mode="lines",
-                        line=dict(color=data["Price_Direction"].iloc[i], width=2),
-                        showlegend=(i==1), name="Close"
-                    ), row=1, col=1)
-
-                # 添加 EMA 和布林带
-                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["EMA5"], 
-                                        name="EMA5", line=dict(color="orange", dash="dash")), row=1, col=1)
-                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["EMA10"], 
-                                        name="EMA10", line=dict(color="green", dash="dash")), row=1, col=1)
-                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["Upper_BB"], 
-                                        name="Upper BB", line=dict(color="gray", dash="dot")), row=1, col=1)
-                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["Lower_BB"], 
-                                        name="Lower BB", line=dict(color="gray", dash="dot")), row=1, col=1)
-                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["SMA20"], 
-                                        name="SMA20", line=dict(color="gray")), row=1, col=1)
-
-                # 添加成交量柱状图（动态着色）
-                fig.add_trace(go.Bar(
-                    x=data.tail(50)["Datetime"], y=data.tail(50)["Volume"],
-                    name="Volume", marker=dict(color=data.tail(50)["Volume_Color"])
-                ), row=1, col=1)
-
-                # 添加买卖信号标记
-                buy_signals = data[data["異動標記"].str.contains("EMA買入|價格趨勢買入|MACD買入")].tail(50)
-                sell_signals = data[data["異動標記"].str.contains("EMA賣出|價格趨勢賣出|MACD賣出")].tail(50)
-                fig.add_trace(go.Scatter(
-                    x=buy_signals["Datetime"], y=buy_signals["Close"],
-                    mode="markers", name="買入訊號",
-                    marker=dict(symbol="triangle-up", size=10, color="green")
-                ), row=1, col=1)
-                fig.add_trace(go.Scatter(
-                    x=sell_signals["Datetime"], y=sell_signals["Close"],
-                    mode="markers", name="賣出訊號",
-                    marker=dict(symbol="triangle-down", size=10, color="red")
-                ), row=1, col=1)
-
-                # 添加 MACD 和信号线
-                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["MACD"], 
-                                        name="MACD", line=dict(color="purple")), row=2, col=1)
-                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["Signal"], 
-                                        name="Signal", line=dict(color="red", dash="dash")), row=2, col=1)
-
-                # 添加 RSI
-                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["RSI"], 
-                                        name="RSI", line=dict(color="teal")), row=3, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
-
-                # 更新布局
-                fig.update_layout(
-                    title=f"{ticker} 價格、成交量與技術指標",
-                    yaxis=dict(title="價格", side="left"),
-                    yaxis2=dict(title="成交量", overlaying="y", side="right"),
-                    yaxis3=dict(title="MACD"),
-                    yaxis4=dict(title="RSI"),
-                    xaxis3=dict(
-                        title="時間",
-                        rangeselector=dict(
-                            buttons=list([
-                                dict(count=1, label="1d", step="day", stepmode="backward"),
-                                dict(count=5, label="5d", step="day", stepmode="backward"),
-                                dict(count=1, label="1m", step="month", stepmode="backward"),
-                                dict(step="all", label="All")
-                            ])
-                        ),
-                        rangeslider=dict(visible=True),
-                        type="date"
-                    ),
-                    hovermode="x unified",
-                    hoverlabel=dict(bgcolor="white", font_size=12),
-                    showlegend=True,
-                    height=800
-                )
-
-                # 自定义悬停信息
-                fig.update_traces(
-                    hovertemplate="時間: %{x}<br>價格: %{y:.2f}<br>成交量: %{customdata[0]:,}<br>EMA5: %{customdata[1]:.2f}<br>EMA10: %{customdata[2]:.2f}<br>RSI: %{customdata[3]:.2f}",
-                    customdata=data.tail(50)[["Volume", "EMA5", "EMA10", "RSI"]],
-                    row=1, col=1
-                )
-
+                fig = px.line(data.tail(50), x="Datetime", y=["Close", "Volume"], 
+                             title=f"{ticker} 價格與成交量",
+                             labels={"Close": "價格", "Volume": "成交量"},
+                             render_mode="svg")
+                fig.update_layout(yaxis2=dict(overlaying="y", side="right", title="成交量"))
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{timestamp}")
 
                 # 合并显示五项指标前 X% 的范围到表格
