@@ -9,6 +9,7 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import os
 import plotly.express as px
+import plotly.graph_objects as go  # 新增：用于 K 线图
 
 st.set_page_config(page_title="股票監控儀表板", layout="wide")
 
@@ -28,6 +29,15 @@ def calculate_macd(data, fast=12, slow=26, signal=9):
     macd = exp1 - exp2
     signal_line = macd.ewm(span=signal, adjust=False).mean()
     return macd, signal_line
+
+# RSI 计算函数（新增）
+def calculate_rsi(data, periods=14):
+    delta = data["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
 # 邮件发送函数
 def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_low_signal=False, 
@@ -130,7 +140,7 @@ VOLUME_THRESHOLD = st.number_input("成交量異動閾值 (%)", min_value=0.1, m
 GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
 CONTINUOUS_UP_THRESHOLD = st.number_input("連續上漲閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
 CONTINUOUS_DOWN_THRESHOLD = st.number_input("連續下跌閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
-PERCENTILE_THRESHOLD = st.selectbox("選擇 Price Change %、Volume Change %、Volume、股價漲跌幅 (%)、成交量變動幅 (%) 數據範圍 (%)", percentile_options, index=1)  # 修改：标题反映控制五项指标
+PERCENTILE_THRESHOLD = st.selectbox("選擇 Price Change %、Volume Change %、Volume、股價漲跌幅 (%)、成交量變動幅 (%) 數據範圍 (%)", percentile_options, index=1)
 
 placeholder = st.empty()
 
@@ -173,6 +183,9 @@ while True:
                 # 计算 EMA5 和 EMA10
                 data["EMA5"] = data["Close"].ewm(span=5, adjust=False).mean()
                 data["EMA10"] = data["Close"].ewm(span=10, adjust=False).mean()
+                
+                # 计算 RSI（新增）
+                data["RSI"] = calculate_rsi(data)
                 
                 # 计算连续上涨/下跌计数
                 data['Up'] = (data['Close'] > data['Close'].shift(1)).astype(int)
@@ -470,14 +483,48 @@ while True:
                                     sma50_up_trend, sma50_down_trend,
                                     sma50_200_up_trend, sma50_200_down_trend)
 
-                # 添加价格和成交量折线图
-                st.subheader(f"📈 {ticker} 價格與成交量趨勢")
+                # 添加 K 线图并叠加 EMA5 和 EMA10，包含成交量柱状图和 RSI 子图（优化）
+                st.subheader(f"📈 {ticker} K線圖與技術指標")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                fig = px.line(data.tail(50), x="Datetime", y=["Close", "Volume"], 
-                             title=f"{ticker} 價格與成交量",
-                             labels={"Close": "價格", "Volume": "成交量"},
-                             render_mode="svg")
-                fig.update_layout(yaxis2=dict(overlaying="y", side="right", title="成交量"))
+                from plotly.subplots import make_subplots
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                                    subplot_titles=(f"{ticker} K線與EMA", "RSI"),
+                                    vertical_spacing=0.1, row_heights=[0.7, 0.3])
+                
+                # 添加 K 线图
+                fig.add_trace(go.Candlestick(x=data.tail(50)["Datetime"],
+                                            open=data.tail(50)["Open"],
+                                            high=data.tail(50)["High"],
+                                            low=data.tail(50)["Low"],
+                                            close=data.tail(50)["Close"],
+                                            name="K線"), row=1, col=1)
+                
+                # 添加 EMA5 和 EMA10
+                fig.add_trace(px.line(data.tail(50), x="Datetime", y="EMA5")["data"][0], row=1, col=1)
+                fig.add_trace(px.line(data.tail(50), x="Datetime", y="EMA10")["data"][0], row=1, col=1)
+                
+                # 添加成交量柱状图
+                fig.add_bar(x=data.tail(50)["Datetime"], y=data.tail(50)["Volume"], 
+                           name="成交量", opacity=0.3, row=1, col=1)
+                
+                # 添加 RSI 子图
+                fig.add_trace(px.line(data.tail(50), x="Datetime", y="RSI")["data"][0], row=2, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)  # 超买线
+                fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)  # 超卖线
+                
+                # 标记 EMA 买入/卖出信号
+                for i in range(1, len(data.tail(50))):
+                    idx = -50 + i  # 调整索引以匹配 tail(50)
+                    if (data["EMA5"].iloc[idx] > data["EMA10"].iloc[idx] and 
+                        data["EMA5"].iloc[idx-1] <= data["EMA10"].iloc[idx-1]):
+                        fig.add_annotation(x=data["Datetime"].iloc[idx], y=data["Close"].iloc[idx],
+                                         text="📈 EMA買入", showarrow=True, arrowhead=2, ax=20, ay=-30, row=1, col=1)
+                    elif (data["EMA5"].iloc[idx] < data["EMA10"].iloc[idx] and 
+                          data["EMA5"].iloc[idx-1] >= data["EMA10"].iloc[idx-1]):
+                        fig.add_annotation(x=data["Datetime"].iloc[idx], y=data["Close"].iloc[idx],
+                                         text="📉 EMA賣出", showarrow=True, arrowhead=2, ax=20, ay=30, row=1, col=1)
+                
+                fig.update_layout(yaxis_title="價格", yaxis2_title="RSI", showlegend=True)
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{timestamp}")
 
                 # 合并显示五项指标前 X% 的范围到表格
