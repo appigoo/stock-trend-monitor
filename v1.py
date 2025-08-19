@@ -40,6 +40,23 @@ def calculate_rsi(data, periods=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+# 计算买入和卖出信号的成功率
+def calculate_signal_success_rate(data, signal_type="新买入信号"):
+    if signal_type == "新买入信号":
+        data["Next_Close_Higher"] = data["Close"].shift(-1) > data["Close"]
+        signal_rows = data[data["異動標記"].str.contains("新买入信号", na=False)]
+        success_count = signal_rows["Next_Close_Higher"].sum() if not signal_rows.empty else 0
+    else:  # 新卖出信号
+        data["Next_Close_Lower"] = data["Close"].shift(-1) < data["Close"]
+        signal_rows = data[data["異動標記"].str.contains("新卖出信号", na=False)]
+        success_count = signal_rows["Next_Close_Lower"].sum() if not signal_rows.empty else 0
+    
+    total_signals = len(signal_rows)
+    if total_signals == 0:
+        return 0.0, 0
+    success_rate = (success_count / total_signals) * 100
+    return success_rate, total_signals
+
 # 邮件发送函数
 def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_low_signal=False, 
                      macd_buy_signal=False, macd_sell_signal=False, ema_buy_signal=False, ema_sell_signal=False,
@@ -50,7 +67,8 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
                      gap_runaway_up=False, gap_runaway_down=False, gap_exhaustion_up=False, gap_exhaustion_down=False,
                      continuous_up_buy_signal=False, continuous_down_sell_signal=False,
                      sma50_up_trend=False, sma50_down_trend=False,
-                     sma50_200_up_trend=False, sma50_200_down_trend=False):
+                     sma50_200_up_trend=False, sma50_200_down_trend=False,
+                     new_buy_signal=False, new_sell_signal=False):
     subject = f"📣 股票異動通知：{ticker}"
     body = f"""
     股票代號：{ticker}
@@ -109,6 +127,10 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
         body += f"\n📈 SMA50_200 上升趨勢：當前價格高於 SMA50 且 SMA50 高於 SMA200！"
     if sma50_200_down_trend:
         body += f"\n📉 SMA50_200 下降趨勢：當前價格低於 SMA50 且 SMA50 低於 SMA200！"
+    if new_buy_signal:
+        body += f"\n📈 新买入信号：今日收盘价大于开盘价且今日开盘价大于前日收盘价！"
+    if new_sell_signal:
+        body += f"\n📉 新卖出信号：今日收盘价小于开盘价且今日开盘价小于前日收盘价！"
     
     body += "\n系統偵測到異常變動，請立即查看市場情況。"
     msg = MIMEMultipart()
@@ -292,6 +314,12 @@ while True:
                             signals.append("📈 SMA50_200上升趨勢")
                         elif row["Close"] < row["SMA50"] and row["SMA50"] < row["SMA200"]:
                             signals.append("📉 SMA50_200下降趨勢")
+                    # 新买入信号：今日收盘价 > 今日开盘价 且 今日开盘价 > 前日收盘价
+                    if index > 0 and row["Close"] > row["Open"] and row["Open"] > data["Close"].iloc[index-1]:
+                        signals.append("📈 新买入信号")
+                    # 新卖出信号：今日收盘价 < 今日开盘价 且 今日开盘价 < 前日收盘价
+                    if index > 0 and row["Close"] < row["Open"] and row["Open"] < data["Close"].iloc[index-1]:
+                        signals.append("📉 新卖出信号")
                     # 检查是否为关键转折点（超过 8 个信号）
                     if len(signals) > 8:
                         signals.append(f"🔥 关键转折点 (信号数: {len(signals)})")
@@ -351,6 +379,14 @@ while True:
                                                   data["Low"].iloc[-1] < data["Low"].iloc[-2] and 
                                                   data["Close"].iloc[-1] < data["Close"].iloc[-2] and 
                                                   data["Volume Change %"].iloc[-1] > 15)
+                # 新买入信号检测
+                new_buy_signal = (len(data) > 1 and 
+                                 data["Close"].iloc[-1] > data["Open"].iloc[-1] and 
+                                 data["Open"].iloc[-1] > data["Close"].iloc[-2])
+                # 新卖出信号检测
+                new_sell_signal = (len(data) > 1 and 
+                                  data["Close"].iloc[-1] < data["Open"].iloc[-1] and 
+                                  data["Open"].iloc[-1] < data["Close"].iloc[-2])
                 
                 # 新增: 跳空信号检测
                 gap_common_up = False
@@ -419,8 +455,18 @@ while True:
                 st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}",
                           f"{volume_change:,} ({volume_pct_change:.2f}%)")
 
-                # 异动提醒 + Email 推播，包含基于成交量变化百分比的价格趋势信号
-                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend:
+                # 计算新买入信号和卖出信号的成功率
+                buy_success_rate, buy_total_signals = calculate_signal_success_rate(data, "新买入信号")
+                sell_success_rate, sell_total_signals = calculate_signal_success_rate(data, "新卖出信号")
+                st.metric(f"{ticker} 📈 新买入信号成功率", 
+                         f"{buy_success_rate:.2f}%",
+                         f"基于 {buy_total_signals} 次信号")
+                st.metric(f"{ticker} 📉 新卖出信号成功率", 
+                         f"{sell_success_rate:.2f}%",
+                         f"基于 {sell_total_signals} 次信号")
+
+                # 异动提醒 + Email 推播，包含新买入和卖出信号
+                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend or new_buy_signal or new_sell_signal:
                     alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
                     if low_high_signal:
                         alert_msg += "，當前最低價高於前一時段最高價"
@@ -474,6 +520,10 @@ while True:
                         alert_msg += "，SMA50_200 上升趨勢（當前價格高於 SMA50 且 SMA50 高於 SMA200）"
                     if sma50_200_down_trend:
                         alert_msg += "，SMA50_200 下降趨勢（當前價格低於 SMA50 且 SMA50 低於 SMA200）"
+                    if new_buy_signal:
+                        alert_msg += "，新买入信号（今日收盘价大于开盘价且今日开盘价大于前日收盘价）"
+                    if new_sell_signal:
+                        alert_msg += "，新卖出信号（今日收盘价小于开盘价且今日开盘价小于前日收盘价）"
                     st.warning(f"📣 {alert_msg}")
                     st.toast(f"📣 {alert_msg}")
                     send_email_alert(ticker, price_pct_change, volume_pct_change, low_high_signal, high_low_signal, 
@@ -485,9 +535,10 @@ while True:
                                     gap_runaway_up, gap_runaway_down, gap_exhaustion_up, gap_exhaustion_down,
                                     continuous_up_buy_signal, continuous_down_sell_signal,
                                     sma50_up_trend, sma50_down_trend,
-                                    sma50_200_up_trend, sma50_200_down_trend)
+                                    sma50_200_up_trend, sma50_200_down_trend,
+                                    new_buy_signal, new_sell_signal)
 
-                # 添加 K 线图（含 EMA）、成交量柱状图和 RSI 子图（优化）
+                # 添加 K 线图（含 EMA）、成交量柱状图和 RSI 子图
                 st.subheader(f"📈 {ticker} K線圖與技術指標")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
@@ -515,7 +566,7 @@ while True:
                 fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)  # 超买线
                 fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)  # 超卖线
                 
-                # 标记 EMA 买入/卖出信号和高亮关键转折点
+                # 标记 EMA 买入/卖出信号、关键转折点、新买入信号和新卖出信号
                 for i in range(1, len(data.tail(50))):
                     idx = -50 + i  # 调整索引以匹配 tail(50)
                     # EMA 买入/卖出信号
@@ -533,6 +584,18 @@ while True:
                                        mode="markers+text", marker=dict(symbol="star", size=12, color="yellow"),
                                        text=[f"🔥 转折点 ${data['Close'].iloc[idx]:.2f}"],
                                        textposition="top center", name="关键转折点", row=1, col=1)
+                    # 新买入信号
+                    if "新买入信号" in data["異動標記"].iloc[idx]:
+                        fig.add_scatter(x=[data["Datetime"].iloc[idx]], y=[data["Close"].iloc[idx]],
+                                       mode="markers+text", marker=dict(symbol="triangle-up", size=10, color="green"),
+                                       text=[f"📈 新买入 ${data['Close'].iloc[idx]:.2f}"],
+                                       textposition="bottom center", name="新买入信号", row=1, col=1)
+                    # 新卖出信号
+                    if "新卖出信号" in data["異動標記"].iloc[idx]:
+                        fig.add_scatter(x=[data["Datetime"].iloc[idx]], y=[data["Close"].iloc[idx]],
+                                       mode="markers+text", marker=dict(symbol="triangle-down", size=10, color="red"),
+                                       text=[f"📉 新卖出 ${data['Close'].iloc[idx]:.2f}"],
+                                       textposition="top center", name="新卖出信号", row=1, col=1)
                 
                 fig.update_layout(yaxis_title="價格", yaxis2_title="成交量", yaxis3_title="RSI", showlegend=True)
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{timestamp}")
@@ -633,7 +696,7 @@ while True:
                 sorted_volume_change_abs = data["📊 成交量變動幅 (%)"].dropna().sort_values(ascending=False)
                 if len(sorted_volume_change_abs) > 0:
                     top_volume_change_abs_count = max(1, int(len(sorted_volume_change_abs) * PERCENTILE_THRESHOLD / 100))
-                    top_volume_change_abs = sorted_volume_change_abs.head(top_volume_change_abs_count)
+                    top_volume_change_abs = sorted_volume_change_abs.head(top_volume_abs_count)
                     range_data.append({
                         "指標": "📊 成交量變動幅 (%)",
                         "範圍類型": "最高到最低",
