@@ -68,7 +68,8 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
                      continuous_up_buy_signal=False, continuous_down_sell_signal=False,
                      sma50_up_trend=False, sma50_down_trend=False,
                      sma50_200_up_trend=False, sma50_200_down_trend=False,
-                     new_buy_signal=False, new_sell_signal=False):
+                     new_buy_signal=False, new_sell_signal=False,
+                     turning_point_signal=False):
     subject = f"📣 股票異動通知：{ticker}"
     body = f"""
     股票代號：{ticker}
@@ -131,6 +132,8 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
         body += f"\n📈 新买入信号：今日收盘价大于开盘价且今日开盘价大于前日收盘价！"
     if new_sell_signal:
         body += f"\n📉 新卖出信号：今日收盘价小于开盘价且今日开盘价小于前日收盘价！"
+    if turning_point_signal:
+        body += f"\n🔥 转折点（量价）：價格變化 {price_pct:.2f}% 且成交量變化 {volume_pct:.2f}% 超過閾值！"
     
     body += "\n系統偵測到異常變動，請立即查看市場情況。"
     msg = MIMEMultipart()
@@ -164,6 +167,8 @@ GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_val
 CONTINUOUS_UP_THRESHOLD = st.number_input("連續上漲閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
 CONTINUOUS_DOWN_THRESHOLD = st.number_input("連續下跌閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
 PERCENTILE_THRESHOLD = st.selectbox("選擇 Price Change %、Volume Change %、Volume、股價漲跌幅 (%)、成交量變動幅 (%) 數據範圍 (%)", percentile_options, index=1)
+PRICE_CHANGE_TURN_THRESHOLD = st.number_input("價格變化轉折點閾值 (%)", min_value=0.1, max_value=200.0, value=50.0, step=0.1)
+VOLUME_CHANGE_TURN_THRESHOLD = st.number_input("成交量變化轉折點閾值 (%)", min_value=0.1, max_value=200.0, value=50.0, step=0.1)
 
 placeholder = st.empty()
 
@@ -225,6 +230,8 @@ while True:
                     signals = []
                     if abs(row["📈 股價漲跌幅 (%)"]) >= PRICE_THRESHOLD and abs(row["📊 成交量變動幅 (%)"]) >= VOLUME_THRESHOLD:
                         signals.append("✅ 量價")
+                    if abs(row["Price Change %"]) >= PRICE_CHANGE_TURN_THRESHOLD and abs(row["Volume Change %"]) >= VOLUME_CHANGE_TURN_THRESHOLD:
+                        signals.append("🔥 转折点（量价）")
                     if index > 0 and row["Low"] > data["High"].iloc[index-1]:
                         signals.append("📈 Low>High")
                     if index > 0 and row["High"] < data["Low"].iloc[index-1]:
@@ -348,7 +355,8 @@ while True:
                                  data["EMA5"].iloc[-2] <= data["EMA10"].iloc[-2] and 
                                  data["Volume"].iloc[-1] > data["Volume"].iloc[-2])
                 ema_sell_signal = (len(data) > 1 and 
-                                  data["EMA5"].iloc[-1] < data["EMA10"].iloc[-1] and 
+                                  data["EMA5 Mosaic"] = True
+                    data["EMA5"].iloc[-1] < data["EMA10"].iloc[-1] and 
                                   data["EMA5"].iloc[-2] >= data["EMA10"].iloc[-2] and 
                                   data["Volume"].iloc[-1] > data["Volume"].iloc[-2])
                 price_trend_buy_signal = (len(data) > 1 and 
@@ -387,6 +395,10 @@ while True:
                 new_sell_signal = (len(data) > 1 and 
                                   data["Close"].iloc[-1] < data["Open"].iloc[-1] and 
                                   data["Open"].iloc[-1] < data["Close"].iloc[-2])
+                # 新增转折点信号检测
+                turning_point_signal = (len(data) > 1 and 
+                                        abs(data["Price Change %"].iloc[-1]) >= PRICE_CHANGE_TURN_THRESHOLD and 
+                                        abs(data["Volume Change %"].iloc[-1]) >= VOLUME_CHANGE_TURN_THRESHOLD)
                 
                 # 新增: 跳空信号检测
                 gap_common_up = False
@@ -466,7 +478,7 @@ while True:
                          f"基于 {sell_total_signals} 次信号")
 
                 # 异动提醒 + Email 推播，包含新买入和卖出信号
-                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend or new_buy_signal or new_sell_signal:
+                if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend or new_buy_signal or new_sell_signal or turning_point_signal:
                     alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
                     if low_high_signal:
                         alert_msg += "，當前最低價高於前一時段最高價"
@@ -524,6 +536,8 @@ while True:
                         alert_msg += "，新买入信号（今日收盘价大于开盘价且今日开盘价大于前日收盘价）"
                     if new_sell_signal:
                         alert_msg += "，新卖出信号（今日收盘价小于开盘价且今日开盘价小于前日收盘价）"
+                    if turning_point_signal:
+                        alert_msg += f"，转折点（量价）（價格變化 {price_pct_change:.2f}% 且成交量變化 {volume_pct_change:.2f}% 超過閾值）"
                     st.warning(f"📣 {alert_msg}")
                     st.toast(f"📣 {alert_msg}")
                     send_email_alert(ticker, price_pct_change, volume_pct_change, low_high_signal, high_low_signal, 
@@ -536,7 +550,8 @@ while True:
                                     continuous_up_buy_signal, continuous_down_sell_signal,
                                     sma50_up_trend, sma50_down_trend,
                                     sma50_200_up_trend, sma50_200_down_trend,
-                                    new_buy_signal, new_sell_signal)
+                                    new_buy_signal, new_sell_signal,
+                                    turning_point_signal)
 
                 # 添加 K 线图（含 EMA）、成交量柱状图和 RSI 子图
                 st.subheader(f"📈 {ticker} K線圖與技術指標")
