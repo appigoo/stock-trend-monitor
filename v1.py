@@ -15,15 +15,12 @@ from plotly.subplots import make_subplots
 st.set_page_config(page_title="股票監控儀表板", layout="wide")
 
 load_dotenv()
-# 異動閾值設定
 REFRESH_INTERVAL = 144  # 秒，5 分鐘自動刷新
-
-# Gmail 發信者帳號設置
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 
-# MACD 計算函數
+# MACD 計算函數（省略，保持不變）
 def calculate_macd(data, fast=12, slow=26, signal=9):
     exp1 = data["Close"].ewm(span=fast, adjust=False).mean()
     exp2 = data["Close"].ewm(span=slow, adjust=False).mean()
@@ -31,7 +28,7 @@ def calculate_macd(data, fast=12, slow=26, signal=9):
     signal_line = macd.ewm(span=signal, adjust=False).mean()
     return macd, signal_line
 
-# RSI 計算函數
+# RSI 計算函數（省略，保持不變）
 def calculate_rsi(data, periods=14):
     delta = data["Close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
@@ -40,18 +37,26 @@ def calculate_rsi(data, periods=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# 計算所有訊號的成功率
+# 計算所有訊號的成功率（改進部分）
 def calculate_signal_success_rate(data):
     # 計算下一交易日收盤價是否高於/低於當前收盤價
     data["Next_Close_Higher"] = data["Close"].shift(-1) > data["Close"]
     data["Next_Close_Lower"] = data["Close"].shift(-1) < data["Close"]
     
-    # 定義賣出訊號列表
+    # 定義賣出訊號列表（確保包含所有 14 種賣出訊號）
     sell_signals = [
         "High<Low", "MACD賣出", "EMA賣出", "價格趨勢賣出", "價格趨勢賣出(量)", 
         "價格趨勢賣出(量%)", "普通跳空(下)", "突破跳空(下)", "持續跳空(下)", 
         "衰竭跳空(下)", "連續向下賣出", "SMA50下降趨勢", "SMA50_200下降趨勢", 
         "新卖出信号"
+    ]
+    
+    # 定義買入訊號列表（17 種，明確列出以便驗證）
+    buy_signals = [
+        "量價", "Low>High", "MACD買入", "EMA買入", "價格趨勢買入", "價格趨勢買入(量)", 
+        "價格趨勢買入(量%)", "普通跳空(上)", "突破跳空(上)", "持續跳空(上)", 
+        "衰竭跳空(上)", "連續向上買入", "SMA50上升趨勢", "SMA50_200上升趨勢", 
+        "新买入信号", "新转折点", "关键转折点"
     ]
     
     # 獲取所有獨特的訊號類型
@@ -67,7 +72,8 @@ def calculate_signal_success_rate(data):
         signal_rows = data[data["異動標記"].str.contains(signal, na=False)]
         total_signals = len(signal_rows)
         if total_signals == 0:
-            success_rates[signal] = {"success_rate": 0.0, "total_signals": 0, "direction": "up" if signal not in sell_signals else "down"}
+            direction = "up" if signal in buy_signals else "down" if signal in sell_signals else "up"
+            success_rates[signal] = {"success_rate": 0.0, "total_signals": 0, "direction": direction}
         else:
             if signal in sell_signals:
                 # 賣出訊號：成功定義為下一交易日收盤價低於當前收盤價
@@ -78,13 +84,15 @@ def calculate_signal_success_rate(data):
                     "direction": "down"
                 }
             else:
-                # 其他訊號：成功定義為下一交易日收盤價高於當前收盤價
+                # 買入訊號：成功定義為下一交易日收盤價高於當前收盤價
                 success_count = signal_rows["Next_Close_Higher"].sum() if not signal_rows.empty else 0
                 success_rates[signal] = {
                     "success_rate": (success_count / total_signals) * 100,
                     "total_signals": total_signals,
                     "direction": "up"
                 }
+        # 添加日誌以驗證訊號分類
+        st.write(f"訊號 {signal} 分類為 {'買入' if success_rates[signal]['direction'] == 'up' else '賣出'}，成功率：{success_rates[signal]['success_rate']:.2f}%")
     
     return success_rates
 
@@ -100,8 +108,7 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
                      sma50_up_trend=False, sma50_down_trend=False,
                      sma50_200_up_trend=False, sma50_200_down_trend=False,
                      new_buy_signal=False, new_sell_signal=False, new_pivot_signal=False):
-    # （省略，保持不變）
-    pass
+    pass  # （省略，保持不變）
 
 # UI 設定（省略，保持不變）
 period_options = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
@@ -133,7 +140,6 @@ while True:
                 stock = yf.Ticker(ticker)
                 data = stock.history(period=selected_period, interval=selected_interval).reset_index()
 
-                # 檢查數據是否為空並統一時間列名稱
                 if data.empty or len(data) < 2:
                     st.warning(f"⚠️ {ticker} 無數據或數據不足（期間：{selected_period}，間隔：{selected_interval}），請嘗試其他時間範圍或間隔")
                     continue
@@ -301,7 +307,7 @@ while True:
                                          data["Close"].iloc[-1] > data["Close"].iloc[-2])
                 price_trend_sell_signal = (len(data) > 1 and 
                                           data["High"].iloc[-1] < data["High"].iloc[-2] and 
-                                          data["Low"].iloc[-1] < data["Low"].iloc[-2] and 
+                                          data["Low"]. ILC[-1] < data["Low"].iloc[-2] and 
                                           data["Close"].iloc[-1] < data["Close"].iloc[-2])
                 price_trend_vol_buy_signal = (len(data) > 1 and 
                                              data["High"].iloc[-1] > data["High"].iloc[-2] and 
@@ -319,7 +325,7 @@ while True:
                                                  data["Close"].iloc[-1] > data["Close"].iloc[-2] and 
                                                  data["Volume Change %"].iloc[-1] > 15)
                 price_trend_vol_pct_sell_signal = (len(data) > 1 and 
-                                                  data["High"].iloc[-1] < data["High"].iloc[-2] and 
+                                                  data["High"]. ILC[-1] < data["High"].iloc[-2] and 
                                                   data["Low"].iloc[-1] < data["Low"].iloc[-2] and 
                                                   data["Close"].iloc[-1] < data["Close"].iloc[-2] and 
                                                   data["Volume Change %"].iloc[-1] > 15)
@@ -378,7 +384,7 @@ while True:
                 continuous_up_buy_signal = data['Continuous_Up'].iloc[-1] >= CONTINUOUS_UP_THRESHOLD
                 continuous_down_sell_signal = data['Continuous_Down'].iloc[-1] >= CONTINUOUS_DOWN_THRESHOLD
                 sma50_up_trend = pd.notna(data["SMA50"].iloc[-1]) and data["Close"].iloc[-1] > data["SMA50"].iloc[-1]
-                sma50_down_trend = pd.notna(data["SMA50"].iloc[-1]) and data["Close"].iloc[-1] < data["SMA50"].iloc[-1]
+                sma50_down_trend = pd.notna(data["SMA50"].iloc[-1]) and data["Close"]. ILC[-1] < data["SMA50"].iloc[-1]
                 sma50_200_up_trend = pd.notna(data["SMA50"].iloc[-1]) and pd.notna(data["SMA200"].iloc[-1]) and \
                                      data["Close"].iloc[-1] > data["SMA50"].iloc[-1] and data["SMA50"].iloc[-1] > data["SMA200"].iloc[-1]
                 sma50_200_down_trend = pd.notna(data["SMA50"].iloc[-1]) and pd.notna(data["SMA200"].iloc[-1]) and \
@@ -390,13 +396,14 @@ while True:
                 st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}",
                           f"{volume_change:,} ({volume_pct_change:.2f}%)")
 
-                # 計算並顯示所有訊號的成功率（修正部分）
+                # 計算並顯示所有訊號的成功率（改進部分）
                 success_rates = calculate_signal_success_rate(data)
                 
                 # 分離買入和賣出訊號
                 buy_signals = []
                 sell_signals = []
                 for signal, metrics in success_rates.items():
+                    # 動態設置成功定義
                     success_definition = ("下一交易日收盤價高於目前收盤價" if metrics["direction"] == "up" 
                                          else "下一交易日收盤價低於目前收盤價")
                     signal_data = {
@@ -407,14 +414,15 @@ while True:
                     }
                     if metrics["direction"] == "up":
                         buy_signals.append(signal_data)
-                    else:
+                    elif metrics["direction"] == "down":
                         sell_signals.append(signal_data)
 
                 # 顯示買入訊號成功率表格
                 st.subheader(f"📈 {ticker} 買入訊號成功率")
                 if buy_signals:
+                    buy_signals_df = pd.DataFrame(buy_signals)
                     st.dataframe(
-                        pd.DataFrame(buy_signals),
+                        buy_signals_df,
                         use_container_width=True,
                         column_config={
                             "訊號": st.column_config.TextColumn("訊號", width="medium"),
@@ -440,8 +448,9 @@ while True:
                 # 顯示賣出訊號成功率表格
                 st.subheader(f"📉 {ticker} 賣出訊號成功率")
                 if sell_signals:
+                    sell_signals_df = pd.DataFrame(sell_signals)
                     st.dataframe(
-                        pd.DataFrame(sell_signals),
+                        sell_signals_df,
                         use_container_width=True,
                         column_config={
                             "訊號": st.column_config.TextColumn("訊號", width="medium"),
