@@ -159,9 +159,9 @@ def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_
     if sma50_200_down_trend:
         body += f"\n📉 SMA50_200 下降趨勢：當前價格低於 SMA50 且 SMA50 低於 SMA200！"
     if new_buy_signal:
-        body += f"\n📈 新买入信号：今日收盘价大于开盘价且今日开盘价大于前日收盘价！"
+        body += f"\n📈 新买入信号：今日收盤價大於開盤價且今日開盤價大於前日收盤價！"
     if new_sell_signal:
-        body += f"\n📉 新卖出信号：今日收盘价小于开盘价且今日开盘价小于前日收盘价！"
+        body += f"\n📉 新卖出信号：今日收盤價小於開盤價且今日開盤價小於前日收盤價！"
     if new_pivot_signal:
         body += f"\n🔄 新转折点：|Price Change %| > {PRICE_CHANGE_THRESHOLD}% 且 |Volume Change %| > {VOLUME_CHANGE_THRESHOLD}%！"
     
@@ -400,7 +400,7 @@ while True:
                                              data["Volume"].iloc[-1] > data["前5均量"].iloc[-1])
                 price_trend_vol_sell_signal = (len(data) > 1 and 
                                               data["High"].iloc[-1] < data["High"].iloc[-2] and 
-                                              data["Low"].iloc[-1] < data["Low"].iloc[-2] and 
+                                              data["Low"]. ILC[-1] < data["Low"].iloc[-2] and 
                                               data["Close"].iloc[-1] < data["Close"].iloc[-2] and 
                                               data["Volume"].iloc[-1] > data["前5均量"].iloc[-1])
                 price_trend_vol_pct_buy_signal = (len(data) > 1 and 
@@ -497,23 +497,21 @@ while True:
                 buy_signals = []
                 sell_signals = []
                 for signal, metrics in success_rates.items():
+                    success_definition = ("下一交易日收盤價高於目前收盤價" if metrics["direction"] == "up" 
+                                         else "下一交易日收盤價低於目前收盤價")
+                    signal_data = {
+                        "訊號": signal,
+                        "成功率 (%)": f"{metrics['success_rate']:.2f}%",
+                        "觸發次數": metrics["total_signals"],
+                        "成功定義": success_definition
+                    }
                     if metrics["direction"] == "up":
-                        buy_signals.append({
-                            "訊號": signal,
-                            "成功率 (%)": f"{metrics['success_rate']:.2f}%",
-                            "觸發次數": metrics["total_signals"],
-                            "成功定義": "下一交易日收盤價高於目前收盤價"
-                        })
+                        buy_signals.append(signal_data)
                     else:
-                        sell_signals.append({
-                            "訊號": signal,
-                            "成功率 (%)": f"{metrics['success_rate']:.2f}%",
-                            "觸發次數": metrics["total_signals"],
-                            "成功定義": "下一交易日收盤價低於目前收盤價"
-                        })
+                        sell_signals.append(signal_data)
 
                 # 显示买入信号成功率表格
-                st.subheader(f"📈 {ticker} 買入訊號成功率（成功定義：下一交易日收盤價高於目前收盤價）")
+                st.subheader(f"📈 {ticker} 買入訊號成功率")
                 if buy_signals:
                     st.dataframe(
                         pd.DataFrame(buy_signals),
@@ -540,7 +538,7 @@ while True:
                     st.write("無買入訊號數據可顯示")
 
                 # 显示卖出信号成功率表格
-                st.subheader(f"📉 {ticker} 賣出訊號成功率（成功定義：下一交易日收盤價低於目前收盤價）")
+                st.subheader(f"📉 {ticker} 賣出訊號成功率")
                 if sell_signals:
                     st.dataframe(
                         pd.DataFrame(sell_signals),
@@ -622,9 +620,9 @@ while True:
                     if sma50_200_down_trend:
                         alert_msg += "，SMA50_200 下降趨勢（當前價格低於 SMA50 且 SMA50 低於 SMA200）"
                     if new_buy_signal:
-                        alert_msg += "，新买入信号（今日收盘价大于开盘价且今日开盘价大于前日收盘价）"
+                        alert_msg += "，新买入信号（今日收盤價大於開盤價且今日開盤價大於前日收盤價）"
                     if new_sell_signal:
-                        alert_msg += "，新卖出信号（今日收盘价小于开盘价且今日开盘价小于前日收盘价）"
+                        alert_msg += "，新卖出信号（今日收盤價小於開盤價且今日開盤價小於前日收盤價）"
                     if new_pivot_signal:
                         alert_msg += f"，新转折点（|Price Change %| > {PRICE_CHANGE_THRESHOLD}% 且 |Volume Change %| > {VOLUME_CHANGE_THRESHOLD}%）"
                     st.warning(f"📣 {alert_msg}")
