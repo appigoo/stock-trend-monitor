@@ -40,22 +40,31 @@ def calculate_rsi(data, periods=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# 计算买入和卖出信号的成功率
-def calculate_signal_success_rate(data, signal_type="新买入信号"):
-    if signal_type == "新买入信号":
-        data["Next_Close_Higher"] = data["Close"].shift(-1) > data["Close"]
-        signal_rows = data[data["異動標記"].str.contains("新买入信号", na=False)]
-        success_count = signal_rows["Next_Close_Higher"].sum() if not signal_rows.empty else 0
-    else:  # 新卖出信号
-        data["Next_Close_Lower"] = data["Close"].shift(-1) < data["Close"]
-        signal_rows = data[data["異動標記"].str.contains("新卖出信号", na=False)]
-        success_count = signal_rows["Next_Close_Lower"].sum() if not signal_rows.empty else 0
+# 计算所有信号的成功率
+def calculate_signal_success_rate(data):
+    # 计算下一交易日收盘价是否高于当前收盘价
+    data["Next_Close_Higher"] = data["Close"].shift(-1) > data["Close"]
     
-    total_signals = len(signal_rows)
-    if total_signals == 0:
-        return 0.0, 0
-    success_rate = (success_count / total_signals) * 100
-    return success_rate, total_signals
+    # 获取所有独特的信号类型
+    all_signals = set()
+    for signals in data["異動標記"].dropna():
+        for signal in signals.split(", "):
+            if signal:
+                all_signals.add(signal)
+    
+    # 计算每种信号的成功率
+    success_rates = {}
+    for signal in all_signals:
+        signal_rows = data[data["異動標記"].str.contains(signal, na=False)]
+        total_signals = len(signal_rows)
+        if total_signals == 0:
+            success_rates[signal] = {"success_rate": 0.0, "total_signals": 0}
+        else:
+            success_count = signal_rows["Next_Close_Higher"].sum() if not signal_rows.empty else 0
+            success_rate = (success_count / total_signals) * 100
+            success_rates[signal] = {"success_rate": success_rate, "total_signals": total_signals}
+    
+    return success_rates
 
 # 邮件发送函数
 def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_low_signal=False, 
@@ -158,8 +167,8 @@ percentile_options = [1, 5, 10, 20]  # 百分比阈值选项
 st.title("📊 股票監控儀表板（含異動提醒與 Email 通知 ✅）")
 input_tickers = st.text_input("請輸入股票代號（逗號分隔）", value="TSLA, NIO, TSLL")
 selected_tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
-selected_period = st.selectbox("選擇時間範圍", period_options, index=1)
-selected_interval = st.selectbox("選擇資料間隔", interval_options, index=1)
+selected_period = st.selectbox("選擇時間範圍", period_options, index=2)  # 默认 1mo
+selected_interval = st.selectbox("選擇資料間隔", interval_options, index=8)  # 默认 1d
 PRICE_THRESHOLD = st.number_input("價格異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
 VOLUME_THRESHOLD = st.number_input("成交量異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
 PRICE_CHANGE_THRESHOLD = st.number_input("新转折点 Price Change % 阈值 (%)", min_value=0.1, max_value=200.0, value=5.0, step=0.1)
@@ -318,13 +327,13 @@ while True:
                             signals.append("📈 SMA50_200上升趨勢")
                         elif row["Close"] < row["SMA50"] and row["SMA50"] < row["SMA200"]:
                             signals.append("📉 SMA50_200下降趨勢")
-                    # 新买入信号：今日收盘价 > 今日开盘价 且 今日开盘价 > 前日收盘价
+                    # 新买入信号
                     if index > 0 and row["Close"] > row["Open"] and row["Open"] > data["Close"].iloc[index-1]:
                         signals.append("📈 新买入信号")
-                    # 新卖出信号：今日收盘价 < 今日开盘价 且 今日开盘价 < 前日收盘价
+                    # 新卖出信号
                     if index > 0 and row["Close"] < row["Open"] and row["Open"] < data["Close"].iloc[index-1]:
                         signals.append("📉 新卖出信号")
-                    # 新转折点：|Price Change %| > X 且 |Volume Change %| > Y
+                    # 新转折点
                     if index > 0 and abs(row["Price Change %"]) > PRICE_CHANGE_THRESHOLD and abs(row["Volume Change %"]) > VOLUME_CHANGE_THRESHOLD:
                         signals.append("🔄 新转折点")
                     # 检查是否为关键转折点（超过 8 个信号）
@@ -386,20 +395,17 @@ while True:
                                                   data["Low"].iloc[-1] < data["Low"].iloc[-2] and 
                                                   data["Close"].iloc[-1] < data["Close"].iloc[-2] and 
                                                   data["Volume Change %"].iloc[-1] > 15)
-                # 新买入信号检测
                 new_buy_signal = (len(data) > 1 and 
                                  data["Close"].iloc[-1] > data["Open"].iloc[-1] and 
                                  data["Open"].iloc[-1] > data["Close"].iloc[-2])
-                # 新卖出信号检测
                 new_sell_signal = (len(data) > 1 and 
                                   data["Close"].iloc[-1] < data["Open"].iloc[-1] and 
                                   data["Open"].iloc[-1] < data["Close"].iloc[-2])
-                # 新转折点检测
                 new_pivot_signal = (len(data) > 1 and 
                                    abs(data["Price Change %"].iloc[-1]) > PRICE_CHANGE_THRESHOLD and 
                                    abs(data["Volume Change %"].iloc[-1]) > VOLUME_CHANGE_THRESHOLD)
                 
-                # 新增: 跳空信号检测
+                # 跳空信号检测
                 gap_common_up = False
                 gap_common_down = False
                 gap_breakaway_up = False
@@ -440,11 +446,11 @@ while True:
                             else:
                                 gap_common_down = True
 
-                # 新增: 连续向上/向下信号检测
+                # 连续向上/向下信号检测
                 continuous_up_buy_signal = data['Continuous_Up'].iloc[-1] >= CONTINUOUS_UP_THRESHOLD
                 continuous_down_sell_signal = data['Continuous_Down'].iloc[-1] >= CONTINUOUS_DOWN_THRESHOLD
 
-                # 新增: SMA趋势信号检测
+                # SMA趋势信号检测
                 sma50_up_trend = False
                 sma50_down_trend = False
                 sma50_200_up_trend = False
@@ -466,17 +472,39 @@ while True:
                 st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}",
                           f"{volume_change:,} ({volume_pct_change:.2f}%)")
 
-                # 计算新买入信号和卖出信号的成功率
-                buy_success_rate, buy_total_signals = calculate_signal_success_rate(data, "新买入信号")
-                sell_success_rate, sell_total_signals = calculate_signal_success_rate(data, "新卖出信号")
-                st.metric(f"{ticker} 📈 新买入信号成功率", 
-                         f"{buy_success_rate:.2f}%",
-                         f"基于 {buy_total_signals} 次信号")
-                st.metric(f"{ticker} 📉 新卖出信号成功率", 
-                         f"{sell_success_rate:.2f}%",
-                         f"基于 {sell_total_signals} 次信号")
+                # 计算并显示所有信号的成功率
+                success_rates = calculate_signal_success_rate(data)
+                st.subheader(f"📊 {ticker} 各信号成功率（下一交易日收盘价高于当前收盘价）")
+                success_data = []
+                for signal, metrics in success_rates.items():
+                    success_rate = metrics["success_rate"]
+                    total_signals = metrics["total_signals"]
+                    success_data.append({
+                        "信号": signal,
+                        "成功率 (%)": f"{success_rate:.2f}%",
+                        "触发次数": total_signals
+                    })
+                    # 显示每个信号的成功率
+                    st.metric(f"{ticker} {signal} 成功率", 
+                              f"{success_rate:.2f}%",
+                              f"基于 {total_signals} 次信号")
+                    # 样本量过少警告
+                    if total_signals > 0 and total_signals < 5:
+                        st.warning(f"⚠️ {ticker} {signal} 样本量过少（{total_signals} 次），成功率可能不稳定")
+                
+                # 显示成功率表格
+                if success_data:
+                    st.dataframe(
+                        pd.DataFrame(success_data),
+                        use_container_width=True,
+                        column_config={
+                            "信号": st.column_config.TextColumn("信号", width="medium"),
+                            "成功率 (%)": st.column_config.TextColumn("成功率 (%)", width="small"),
+                            "触发次数": st.column_config.NumberColumn("触发次数", width="small")
+                        }
+                    )
 
-                # 异动提醒 + Email 推播，包含新买入、卖出信号和新转折点
+                # 异动提醒 + Email 推播
                 if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend or new_buy_signal or new_sell_signal or new_pivot_signal:
                     alert_msg = f"{ticker} 異動：價格 {price_pct_change:.2f}%、成交量 {volume_pct_change:.2f}%"
                     if low_high_signal:
@@ -570,7 +598,7 @@ while True:
                 fig.add_trace(px.line(data.tail(50), x="Datetime", y="EMA5")["data"][0], row=1, col=1)
                 fig.add_trace(px.line(data.tail(50), x="Datetime", y="EMA10")["data"][0], row=1, col=1)
                 
-                # 添加成交量柱状图（单独子图）
+                # 添加成交量柱状图
                 fig.add_bar(x=data.tail(50)["Datetime"], y=data.tail(50)["Volume"], 
                            name="成交量", opacity=0.5, row=2, col=1)
                 
@@ -582,7 +610,6 @@ while True:
                 # 标记 EMA 买入/卖出信号、关键转折点、新买入信号、新卖出信号和新转折点
                 for i in range(1, len(data.tail(50))):
                     idx = -50 + i  # 调整索引以匹配 tail(50)
-                    # EMA 买入/卖出信号
                     if (data["EMA5"].iloc[idx] > data["EMA10"].iloc[idx] and 
                         data["EMA5"].iloc[idx-1] <= data["EMA10"].iloc[idx-1]):
                         fig.add_annotation(x=data["Datetime"].iloc[idx], y=data["Close"].iloc[idx],
@@ -591,25 +618,21 @@ while True:
                           data["EMA5"].iloc[idx-1] >= data["EMA10"].iloc[idx-1]):
                         fig.add_annotation(x=data["Datetime"].iloc[idx], y=data["Close"].iloc[idx],
                                          text="📉 EMA賣出", showarrow=True, arrowhead=2, ax=20, ay=30, row=1, col=1)
-                    # 关键转折点（信号数 > 8）
                     if "关键转折点" in data["異動標記"].iloc[idx]:
                         fig.add_scatter(x=[data["Datetime"].iloc[idx]], y=[data["Close"].iloc[idx]],
                                        mode="markers+text", marker=dict(symbol="star", size=12, color="yellow"),
                                        text=[f"🔥 转折点 ${data['Close'].iloc[idx]:.2f}"],
                                        textposition="top center", name="关键转折点", row=1, col=1)
-                    # 新买入信号
                     if "新买入信号" in data["異動標記"].iloc[idx]:
                         fig.add_scatter(x=[data["Datetime"].iloc[idx]], y=[data["Close"].iloc[idx]],
                                        mode="markers+text", marker=dict(symbol="triangle-up", size=10, color="green"),
                                        text=[f"📈 新买入 ${data['Close'].iloc[idx]:.2f}"],
                                        textposition="bottom center", name="新买入信号", row=1, col=1)
-                    # 新卖出信号
                     if "新卖出信号" in data["異動標記"].iloc[idx]:
                         fig.add_scatter(x=[data["Datetime"].iloc[idx]], y=[data["Close"].iloc[idx]],
                                        mode="markers+text", marker=dict(symbol="triangle-down", size=10, color="red"),
                                        text=[f"📉 新卖出 ${data['Close'].iloc[idx]:.2f}"],
                                        textposition="top center", name="新卖出信号", row=1, col=1)
-                    # 新转折点
                     if "新转折点" in data["異動標記"].iloc[idx]:
                         fig.add_scatter(x=[data["Datetime"].iloc[idx]], y=[data["Close"].iloc[idx]],
                                        mode="markers+text", marker=dict(symbol="star", size=10, color="purple"),
