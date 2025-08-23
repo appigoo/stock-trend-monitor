@@ -490,40 +490,81 @@ while True:
                 st.metric(f"{ticker} 🔵 成交量變動", f"{last_volume:,}",
                           f"{volume_change:,} ({volume_pct_change:.2f}%)")
 
-                # 计算并显示所有信号的成功率
+                # 计算并显示所有信号的成功率，分为买入和卖出两类
                 success_rates = calculate_signal_success_rate(data)
-                st.subheader(f"📊 {ticker} 各信号成功率")
-                success_data = []
-                for signal, metrics in success_rates.items():
-                    success_rate = metrics["success_rate"]
-                    total_signals = metrics["total_signals"]
-                    direction = metrics["direction"]
-                    success_data.append({
-                        "信号": signal,
-                        "成功率 (%)": f"{success_rate:.2f}%",
-                        "触发次数": total_signals,
-                        "成功定义": "下一交易日收盘价低于当前收盘价" if direction == "down" else "下一交易日收盘价高于当前收盘价"
-                    })
-                    # 显示每个信号的成功率
-                    st.metric(f"{ticker} {signal} 成功率", 
-                              f"{success_rate:.2f}%",
-                              f"基于 {total_signals} 次信号 ({'下跌' if direction == 'down' else '上涨'})")
-                    # 样本量过少警告
-                    if total_signals > 0 and total_signals < 5:
-                        st.warning(f"⚠️ {ticker} {signal} 样本量过少（{total_signals} 次），成功率可能不稳定")
                 
-                # 显示成功率表格
-                if success_data:
+                # 分离买入和卖出信号
+                buy_signals = []
+                sell_signals = []
+                for signal, metrics in success_rates.items():
+                    if metrics["direction"] == "up":
+                        buy_signals.append({
+                            "訊號": signal,
+                            "成功率 (%)": f"{metrics['success_rate']:.2f}%",
+                            "觸發次數": metrics["total_signals"],
+                            "成功定義": "下一交易日收盤價高於目前收盤價"
+                        })
+                    else:
+                        sell_signals.append({
+                            "訊號": signal,
+                            "成功率 (%)": f"{metrics['success_rate']:.2f}%",
+                            "觸發次數": metrics["total_signals"],
+                            "成功定義": "下一交易日收盤價低於目前收盤價"
+                        })
+
+                # 显示买入信号成功率表格
+                st.subheader(f"📈 {ticker} 買入訊號成功率（成功定義：下一交易日收盤價高於目前收盤價）")
+                if buy_signals:
                     st.dataframe(
-                        pd.DataFrame(success_data),
+                        pd.DataFrame(buy_signals),
                         use_container_width=True,
                         column_config={
-                            "信号": st.column_config.TextColumn("信号", width="medium"),
+                            "訊號": st.column_config.TextColumn("訊號", width="medium"),
                             "成功率 (%)": st.column_config.TextColumn("成功率 (%)", width="small"),
-                            "触发次数": st.column_config.NumberColumn("触发次数", width="small"),
-                            "成功定义": st.column_config.TextColumn("成功定义", width="large")
+                            "觸發次數": st.column_config.NumberColumn("觸發次數", width="small"),
+                            "成功定義": st.column_config.TextColumn("成功定義", width="large")
                         }
                     )
+                    for signal_data in buy_signals:
+                        signal = signal_data["訊號"]
+                        success_rate = float(signal_data["成功率 (%)"].strip("%"))
+                        total_signals = signal_data["觸發次數"]
+                        st.metric(
+                            f"{ticker} {signal} 成功率",
+                            f"{success_rate:.2f}%",
+                            f"基於 {total_signals} 次訊號 (上漲)"
+                        )
+                        if 0 < total_signals < 5:
+                            st.warning(f"⚠️ {ticker} {signal} 樣本量過少（{total_signals} 次），成功率可能不穩定")
+                else:
+                    st.write("無買入訊號數據可顯示")
+
+                # 显示卖出信号成功率表格
+                st.subheader(f"📉 {ticker} 賣出訊號成功率（成功定義：下一交易日收盤價低於目前收盤價）")
+                if sell_signals:
+                    st.dataframe(
+                        pd.DataFrame(sell_signals),
+                        use_container_width=True,
+                        column_config={
+                            "訊號": st.column_config.TextColumn("訊號", width="medium"),
+                            "成功率 (%)": st.column_config.TextColumn("成功率 (%)", width="small"),
+                            "觸發次數": st.column_config.NumberColumn("觸發次數", width="small"),
+                            "成功定義": st.column_config.TextColumn("成功定義", width="large")
+                        }
+                    )
+                    for signal_data in sell_signals:
+                        signal = signal_data["訊號"]
+                        success_rate = float(signal_data["成功率 (%)"].strip("%"))
+                        total_signals = signal_data["觸發次數"]
+                        st.metric(
+                            f"{ticker} {signal} 成功率",
+                            f"{success_rate:.2f}%",
+                            f"基於 {total_signals} 次訊號 (下跌)"
+                        )
+                        if 0 < total_signals < 5:
+                            st.warning(f"⚠️ {ticker} {signal} 樣本量過少（{total_signals} 次），成功率可能不穩定")
+                else:
+                    st.write("無賣出訊號數據可顯示")
 
                 # 异动提醒 + Email 推播
                 if (abs(price_pct_change) >= PRICE_THRESHOLD and abs(volume_pct_change) >= VOLUME_THRESHOLD) or low_high_signal or high_low_signal or macd_buy_signal or macd_sell_signal or ema_buy_signal or ema_sell_signal or price_trend_buy_signal or price_trend_sell_signal or price_trend_vol_buy_signal or price_trend_vol_sell_signal or price_trend_vol_pct_buy_signal or price_trend_vol_pct_sell_signal or gap_common_up or gap_common_down or gap_breakaway_up or gap_breakaway_down or gap_runaway_up or gap_runaway_down or gap_exhaustion_up or gap_exhaustion_down or continuous_up_buy_signal or continuous_down_sell_signal or sma50_up_trend or sma50_down_trend or sma50_200_up_trend or sma50_200_down_trend or new_buy_signal or new_sell_signal or new_pivot_signal:
@@ -828,5 +869,3 @@ while True:
 
     time.sleep(REFRESH_INTERVAL)
     placeholder.empty()
-
-
