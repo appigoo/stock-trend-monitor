@@ -40,18 +40,17 @@ def calculate_rsi(data, periods=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# 修改后的信号成功率计算函数
+# 修改后的计算所有信号成功率函数
 def calculate_signal_success_rate(data):
-    # 计算下一交易日收盘价是否高于/低于当前收盘价
+    # 计算下一交易日收盘价是否高于或低于当前收盘价
     data["Next_Close_Higher"] = data["Close"].shift(-1) > data["Close"]
     data["Next_Close_Lower"] = data["Close"].shift(-1) < data["Close"]
     
     # 定义卖出信号列表
     sell_signals = [
-        "High<Low", "MACD賣出", "EMA賣出", "價格趨勢賣出", "價格趨勢賣出(量)", 
-        "價格趨勢賣出(量%)", "普通跳空(下)", "突破跳空(下)", "持續跳空(下)", 
-        "衰竭跳空(下)", "連續向下賣出", "SMA50下降趨勢", "SMA50_200下降趨勢", 
-        "新卖出信号"
+        "High<Low", "MACD賣出", "EMA賣出", "價格趨勢賣出", "價格趨勢賣出(量)", "價格趨勢賣出(量%)",
+        "普通跳空(下)", "突破跳空(下)", "持續跳空(下)", "衰竭跳空(下)", "連續向下賣出",
+        "SMA50下降趨勢", "SMA50_200下降趨勢", "新卖出信号"
     ]
     
     # 获取所有独特的信号类型
@@ -80,7 +79,7 @@ def calculate_signal_success_rate(data):
     
     return success_rates
 
-# 邮件发送函数
+# 邮件发送函数（保持不变）
 def send_email_alert(ticker, price_pct, volume_pct, low_high_signal=False, high_low_signal=False, 
                      macd_buy_signal=False, macd_sell_signal=False, ema_buy_signal=False, ema_sell_signal=False,
                      price_trend_buy_signal=False, price_trend_sell_signal=False,
@@ -341,16 +340,12 @@ while True:
                             signals.append("📈 SMA50_200上升趨勢")
                         elif row["Close"] < row["SMA50"] and row["SMA50"] < row["SMA200"]:
                             signals.append("📉 SMA50_200下降趨勢")
-                    # 新买入信号
                     if index > 0 and row["Close"] > row["Open"] and row["Open"] > data["Close"].iloc[index-1]:
                         signals.append("📈 新买入信号")
-                    # 新卖出信号
                     if index > 0 and row["Close"] < row["Open"] and row["Open"] < data["Close"].iloc[index-1]:
                         signals.append("📉 新卖出信号")
-                    # 新转折点
                     if index > 0 and abs(row["Price Change %"]) > PRICE_CHANGE_THRESHOLD and abs(row["Volume Change %"]) > VOLUME_CHANGE_THRESHOLD:
                         signals.append("🔄 新转折点")
-                    # 检查是否为关键转折点（超过 8 个信号）
                     if len(signals) > 8:
                         signals.append(f"🔥 关键转折点 (信号数: {len(signals)})")
                     return ", ".join(signals) if signals else ""
@@ -407,7 +402,7 @@ while True:
                 price_trend_vol_pct_sell_signal = (len(data) > 1 and 
                                                   data["High"].iloc[-1] < data["High"].iloc[-2] and 
                                                   data["Low"].iloc[-1] < data["Low"].iloc[-2] and 
-                                                  data["Close"].iloc[-1] < data["Close"].iloc[-2] and 
+                                                  data["Close"].iloc[-1] < data["Close"]. ILC[-2] and 
                                                   data["Volume Change %"].iloc[-1] > 15)
                 new_buy_signal = (len(data) > 1 and 
                                  data["Close"].iloc[-1] > data["Open"].iloc[-1] and 
@@ -493,17 +488,18 @@ while True:
                 for signal, metrics in success_rates.items():
                     success_rate = metrics["success_rate"]
                     total_signals = metrics["total_signals"]
-                    success_criterion = "下一交易日收盘价低于当前收盘价" if signal in sell_signals else "下一交易日收盘价高于当前收盘价"
+                    # 标注成功率定义
+                    success_label = "下一交易日收盘价低于当前收盘价" if signal in sell_signals else "下一交易日收盘价高于当前收盘价"
                     success_data.append({
                         "信号": signal,
                         "成功率 (%)": f"{success_rate:.2f}%",
                         "触发次数": total_signals,
-                        "成功标准": success_criterion
+                        "成功定义": success_label
                     })
                     # 显示每个信号的成功率
-                    st.metric(f"{ticker} {signal} 成功率", 
+                    st.metric(f"{ticker} {signal} 成功率 ({success_label})", 
                               f"{success_rate:.2f}%",
-                              f"基于 {total_signals} 次信号 ({success_criterion})")
+                              f"基于 {total_signals} 次信号")
                     # 样本量过少警告
                     if total_signals > 0 and total_signals < 5:
                         st.warning(f"⚠️ {ticker} {signal} 样本量过少（{total_signals} 次），成功率可能不稳定")
@@ -517,7 +513,7 @@ while True:
                             "信号": st.column_config.TextColumn("信号", width="medium"),
                             "成功率 (%)": st.column_config.TextColumn("成功率 (%)", width="small"),
                             "触发次数": st.column_config.NumberColumn("触发次数", width="small"),
-                            "成功标准": st.column_config.TextColumn("成功标准", width="large")
+                            "成功定义": st.column_config.TextColumn("成功定义", width="large")
                         }
                     )
 
@@ -626,7 +622,7 @@ while True:
                 
                 # 标记 EMA 买入/卖出信号、关键转折点、新买入信号、新卖出信号和新转折点
                 for i in range(1, len(data.tail(50))):
-                    idx = -50 + i  # 调整索引以匹配 tail(50)
+                    idx = -50 + i
                     if (data["EMA5"].iloc[idx] > data["EMA10"].iloc[idx] and 
                         data["EMA5"].iloc[idx-1] <= data["EMA10"].iloc[idx-1]):
                         fig.add_annotation(x=data["Datetime"].iloc[idx], y=data["Close"].iloc[idx],
@@ -755,7 +751,7 @@ while True:
                 sorted_volume_change_abs = data["📊 成交量變動幅 (%)"].dropna().sort_values(ascending=False)
                 if len(sorted_volume_change_abs) > 0:
                     top_volume_change_abs_count = max(1, int(len(sorted_volume_change_abs) * PERCENTILE_THRESHOLD / 100))
-                    top_volume_change_abs = sorted_volume_change_abs.head(top_volume_abs_count)
+                    top_volume_change_abs = sorted_volume_change_abs.head(top_volume_change_abs_count)
                     range_data.append({
                         "指標": "📊 成交量變動幅 (%)",
                         "範圍類型": "最高到最低",
