@@ -40,7 +40,7 @@ def calculate_rsi(data, periods=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# 计算所有信号的成功率
+# 修改后的信号成功率计算函数
 def calculate_signal_success_rate(data):
     # 计算下一交易日收盘价是否高于/低于当前收盘价
     data["Next_Close_Higher"] = data["Close"].shift(-1) > data["Close"]
@@ -67,24 +67,16 @@ def calculate_signal_success_rate(data):
         signal_rows = data[data["異動標記"].str.contains(signal, na=False)]
         total_signals = len(signal_rows)
         if total_signals == 0:
-            success_rates[signal] = {"success_rate": 0.0, "total_signals": 0, "direction": "up" if signal not in sell_signals else "down"}
+            success_rates[signal] = {"success_rate": 0.0, "total_signals": 0}
         else:
             if signal in sell_signals:
-                # 卖出信号：成功定义为下一交易日收盘价低于当前收盘价
+                # 卖出信号：下一交易日收盘价低于当前收盘价
                 success_count = signal_rows["Next_Close_Lower"].sum() if not signal_rows.empty else 0
-                success_rates[signal] = {
-                    "success_rate": (success_count / total_signals) * 100,
-                    "total_signals": total_signals,
-                    "direction": "down"
-                }
             else:
-                # 其他信号：成功定义为下一交易日收盘价高于当前收盘价
+                # 其他信号：下一交易日收盘价高于当前收盘价
                 success_count = signal_rows["Next_Close_Higher"].sum() if not signal_rows.empty else 0
-                success_rates[signal] = {
-                    "success_rate": (success_count / total_signals) * 100,
-                    "total_signals": total_signals,
-                    "direction": "up"
-                }
+            success_rate = (success_count / total_signals) * 100
+            success_rates[signal] = {"success_rate": success_rate, "total_signals": total_signals}
     
     return success_rates
 
@@ -349,12 +341,16 @@ while True:
                             signals.append("📈 SMA50_200上升趨勢")
                         elif row["Close"] < row["SMA50"] and row["SMA50"] < row["SMA200"]:
                             signals.append("📉 SMA50_200下降趨勢")
+                    # 新买入信号
                     if index > 0 and row["Close"] > row["Open"] and row["Open"] > data["Close"].iloc[index-1]:
                         signals.append("📈 新买入信号")
+                    # 新卖出信号
                     if index > 0 and row["Close"] < row["Open"] and row["Open"] < data["Close"].iloc[index-1]:
                         signals.append("📉 新卖出信号")
+                    # 新转折点
                     if index > 0 and abs(row["Price Change %"]) > PRICE_CHANGE_THRESHOLD and abs(row["Volume Change %"]) > VOLUME_CHANGE_THRESHOLD:
                         signals.append("🔄 新转折点")
+                    # 检查是否为关键转折点（超过 8 个信号）
                     if len(signals) > 8:
                         signals.append(f"🔥 关键转折点 (信号数: {len(signals)})")
                     return ", ".join(signals) if signals else ""
@@ -497,17 +493,17 @@ while True:
                 for signal, metrics in success_rates.items():
                     success_rate = metrics["success_rate"]
                     total_signals = metrics["total_signals"]
-                    direction = metrics["direction"]
+                    success_criterion = "下一交易日收盘价低于当前收盘价" if signal in sell_signals else "下一交易日收盘价高于当前收盘价"
                     success_data.append({
                         "信号": signal,
                         "成功率 (%)": f"{success_rate:.2f}%",
                         "触发次数": total_signals,
-                        "成功定义": "下一交易日收盘价低于当前收盘价" if direction == "down" else "下一交易日收盘价高于当前收盘价"
+                        "成功标准": success_criterion
                     })
                     # 显示每个信号的成功率
                     st.metric(f"{ticker} {signal} 成功率", 
                               f"{success_rate:.2f}%",
-                              f"基于 {total_signals} 次信号 ({'下跌' if direction == 'down' else '上涨'})")
+                              f"基于 {total_signals} 次信号 ({success_criterion})")
                     # 样本量过少警告
                     if total_signals > 0 and total_signals < 5:
                         st.warning(f"⚠️ {ticker} {signal} 样本量过少（{total_signals} 次），成功率可能不稳定")
@@ -521,7 +517,7 @@ while True:
                             "信号": st.column_config.TextColumn("信号", width="medium"),
                             "成功率 (%)": st.column_config.TextColumn("成功率 (%)", width="small"),
                             "触发次数": st.column_config.NumberColumn("触发次数", width="small"),
-                            "成功定义": st.column_config.TextColumn("成功定义", width="large")
+                            "成功标准": st.column_config.TextColumn("成功标准", width="large")
                         }
                     )
 
@@ -828,4 +824,3 @@ while True:
 
     time.sleep(REFRESH_INTERVAL)
     placeholder.empty()
-
