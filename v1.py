@@ -42,9 +42,11 @@ def calculate_rsi(data, periods=14):
 
 # 计算所有信号的成功率
 def calculate_signal_success_rate(data):
-    # 计算下一交易日收盘价是否高于/低于当前收盘价
+    # 计算下一交易日相关比较
     data["Next_Close_Higher"] = data["Close"].shift(-1) > data["Close"]
     data["Next_Close_Lower"] = data["Close"].shift(-1) < data["Close"]
+    data["Next_High_Higher"] = data["High"].shift(-1) > data["High"]
+    data["Next_Low_Lower"] = data["Low"].shift(-1) < data["Low"]
     
     # 定义卖出信号列表
     sell_signals = [
@@ -70,16 +72,16 @@ def calculate_signal_success_rate(data):
             success_rates[signal] = {"success_rate": 0.0, "total_signals": 0, "direction": "up" if signal not in sell_signals else "down"}
         else:
             if signal in sell_signals:
-                # 卖出信号：成功定义为下一交易日收盘价低于当前收盘价
-                success_count = signal_rows["Next_Close_Lower"].sum() if not signal_rows.empty else 0
+                # 卖出信号：成功定义为下一交易日的最低价低于当前最低价且收盘价低于当前收盘价
+                success_count = (signal_rows["Next_Low_Lower"] & signal_rows["Next_Close_Lower"]).sum() if not signal_rows.empty else 0
                 success_rates[signal] = {
                     "success_rate": (success_count / total_signals) * 100,
                     "total_signals": total_signals,
                     "direction": "down"
                 }
             else:
-                # 其他信号：成功定义为下一交易日收盘价高于当前收盘价
-                success_count = signal_rows["Next_Close_Higher"].sum() if not signal_rows.empty else 0
+                # 买入信号：成功定义为下一交易日的最高价高于当前最高价且收盘价高于当前收盘价
+                success_count = (signal_rows["Next_High_Higher"] & signal_rows["Next_Close_Higher"]).sum() if not signal_rows.empty else 0
                 success_rates[signal] = {
                     "success_rate": (success_count / total_signals) * 100,
                     "total_signals": total_signals,
@@ -759,7 +761,7 @@ while True:
                 sorted_volume_change_abs = data["📊 成交量變動幅 (%)"].dropna().sort_values(ascending=False)
                 if len(sorted_volume_change_abs) > 0:
                     top_volume_change_abs_count = max(1, int(len(sorted_volume_change_abs) * PERCENTILE_THRESHOLD / 100))
-                    top_volume_change_abs = sorted_volume_change_abs.head(top_volume_abs_count)
+                    top_volume_change_abs = sorted_volume_change_abs.head(top_volume_change_abs_count)
                     range_data.append({
                         "指標": "📊 成交量變動幅 (%)",
                         "範圍類型": "最高到最低",
@@ -769,7 +771,7 @@ while True:
                 sorted_volume_change_abs_asc = data["📊 成交量變動幅 (%)"].dropna().sort_values(ascending=True)
                 if len(sorted_volume_change_abs_asc) > 0:
                     bottom_volume_change_abs_count = max(1, int(len(sorted_volume_change_abs_asc) * PERCENTILE_THRESHOLD / 100))
-                    bottom_volume_change_abs = sorted_volume_change_abs_asc.head(bottom_volume_abs_count)
+                    bottom_volume_change_abs = sorted_volume_change_abs_asc.head(bottom_volume_change_abs_count)
                     range_data.append({
                         "指標": "📊 成交量變動幅 (%)",
                         "範圍類型": "最低到最高",
@@ -828,6 +830,3 @@ while True:
 
     time.sleep(REFRESH_INTERVAL)
     placeholder.empty()
-
-
-
