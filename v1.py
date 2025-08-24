@@ -198,7 +198,7 @@ PRICE_THRESHOLD = st.number_input("價格異動閾值 (%)", min_value=0.1, max_v
 VOLUME_THRESHOLD = st.number_input("成交量異動閾值 (%)", min_value=0.1, max_value=200.0, value=80.0, step=0.1)
 PRICE_CHANGE_THRESHOLD = st.number_input("新转折点 Price Change % 阈值 (%)", min_value=0.1, max_value=200.0, value=5.0, step=0.1)
 VOLUME_CHANGE_THRESHOLD = st.number_input("新转折点 Volume Change % 阈值 (%)", min_value=0.1, max_value=200.0, value=10.0, step=0.1)
-GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.01, max_value=50.0, value=1.0, step=0.01)
+GAP_THRESHOLD = st.number_input("跳空幅度閾值 (%)", min_value=0.1, max_value=50.0, value=1.0, step=0.1)
 CONTINUOUS_UP_THRESHOLD = st.number_input("連續上漲閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
 CONTINUOUS_DOWN_THRESHOLD = st.number_input("連續下跌閾值 (根K線)", min_value=1, max_value=20, value=3, step=1)
 PERCENTILE_THRESHOLD = st.selectbox("選擇 Price Change %、Volume Change %、Volume、股價漲跌幅 (%)、成交量變動幅 (%) 數據範圍 (%)", percentile_options, index=1)
@@ -637,15 +637,23 @@ while True:
                 # 添加 EMA5 和 EMA10
                 fig.add_trace(px.line(data.tail(50), x="Datetime", y="EMA5")["data"][0], row=1, col=1)
                 fig.add_trace(px.line(data.tail(50), x="Datetime", y="EMA10")["data"][0], row=1, col=1)
+                # 添加 SMA50 以显示趋势
+                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["SMA50"], mode='lines', name='SMA50', line=dict(color='orange')), row=1, col=1)
                 
                 # 添加成交量柱状图
                 fig.add_bar(x=data.tail(50)["Datetime"], y=data.tail(50)["Volume"], 
                            name="成交量", opacity=0.5, row=2, col=1)
+                # 添加成交量移动平均线以显示趋势
+                data["Volume_MA5"] = data["Volume"].rolling(window=5).mean()
+                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["Volume_MA5"], mode='lines', name='Volume MA5', line=dict(color='purple')), row=2, col=1)
                 
                 # 添加 RSI 子图
                 fig.add_trace(px.line(data.tail(50), x="Datetime", y="RSI")["data"][0], row=3, col=1)
                 fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)  # 超买线
                 fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)  # 超卖线
+                # 添加 RSI 移动平均线以显示趋势
+                data["RSI_MA9"] = data["RSI"].rolling(window=9).mean()
+                fig.add_trace(go.Scatter(x=data.tail(50)["Datetime"], y=data.tail(50)["RSI_MA9"], mode='lines', name='RSI MA9', line=dict(color='blue')), row=3, col=1)
                 
                 # 标记 EMA 买入/卖出信号、关键转折点、新买入信号、新卖出信号和新转折点
                 for i in range(1, len(data.tail(50))):
