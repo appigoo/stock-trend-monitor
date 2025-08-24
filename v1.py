@@ -53,7 +53,7 @@ def calculate_signal_success_rate(data):
         "📉 High<Low", "📉 MACD賣出", "📉 EMA賣出", "📉 價格趨勢賣出", "📉 價格趨勢賣出(量)", 
         "📉 價格趨勢賣出(量%)", "📉 普通跳空(下)", "📉 突破跳空(下)", "📉 持續跳空(下)", 
         "📉 衰竭跳空(下)", "📉 連續向下賣出", "📉 SMA50下降趨勢", "📉 SMA50_200下降趨勢", 
-        "📉 新卖出信号"
+        "📉 新卖出信号", "📉 RSI-MACD Overbought Crossover", "📉 EMA-SMA Sell", "📉 Volume-MACD Sell"
     ]
     
     # 获取所有独特的信号类型
@@ -359,6 +359,20 @@ while True:
                         signals.append("🔄 新转折点")
                     if len(signals) > 8:
                         signals.append(f"🔥 关键转折点 (信号数: {len(signals)})")
+                    # 添加新的买入信号
+                    if index > 0 and row["RSI"] < 30 and row["MACD"] > 0 and data["MACD"].iloc[index-1] <= 0:
+                        signals.append("📈 RSI-MACD Oversold Crossover")
+                    if index > 0 and row["EMA5"] > row["EMA10"] and row["Close"] > row["SMA50"]:
+                        signals.append("📈 EMA-SMA Uptrend Buy")
+                    if index > 0 and row["Volume"] > data["前5均量"].iloc[index] and row["MACD"] > 0 and data["MACD"].iloc[index-1] <= 0:
+                        signals.append("📈 Volume-MACD Buy")
+                    # 添加新的卖出信号
+                    if index > 0 and row["RSI"] > 70 and row["MACD"] < 0 and data["MACD"].iloc[index-1] >= 0:
+                        signals.append("📉 RSI-MACD Overbought Crossover")
+                    if index > 0 and row["EMA5"] < row["EMA10"] and row["Close"] < row["SMA50"]:
+                        signals.append("📉 EMA-SMA Downtrend Sell")
+                    if index > 0 and row["Volume"] > data["前5均量"].iloc[index] and row["MACD"] < 0 and data["MACD"].iloc[index-1] >= 0:
+                        signals.append("📉 Volume-MACD Sell")
                     return ", ".join(signals) if signals else ""
                 
                 data["異動標記"] = [mark_signal(row, i) for i, row in data.iterrows()]
