@@ -500,11 +500,12 @@ while True:
                     success_rate = metrics["success_rate"]
                     total_signals = metrics["total_signals"]
                     direction = metrics["direction"]
+                    success_definition = "下一交易日的最低价低于当前最低价且收盘价低于当前收盘价" if direction == "down" else "下一交易日的最高价高于当前最高价且收盘价高于当前收盘价"
                     success_data.append({
                         "信号": signal,
                         "成功率 (%)": f"{success_rate:.2f}%",
                         "触发次数": total_signals,
-                        "成功定义": "下一交易日收盘价低于当前收盘价" if direction == "down" else "下一交易日收盘价高于当前收盘价"
+                        "成功定义": success_definition
                     })
                     # 显示每个信号的成功率
                     st.metric(f"{ticker} {signal} 成功率", 
